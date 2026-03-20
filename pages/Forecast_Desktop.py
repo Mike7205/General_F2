@@ -32,11 +32,17 @@ with st.sidebar:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_hist(ticker, n):
-    df = yf.download(ticker, period="6y", interval="1d", progress=False)
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = [c[0] for c in df.columns]
-    df = df.reset_index()
-    df = df[["Date", "Close"]].dropna()
+    raw = yf.download(ticker, period="6y", interval="1d",
+                      progress=False, auto_adjust=True)
+    if isinstance(raw.columns, pd.MultiIndex):
+        raw.columns = [str(c[0]) for c in raw.columns]
+    col = raw["Close"]
+    if isinstance(col, pd.DataFrame):
+        col = col.iloc[:, 0]
+    col = col.squeeze()
+    df = col.reset_index()
+    df.columns = ["Date", "Close"]
+    df = df.dropna()
     return df.tail(n).reset_index(drop=True)
 
 
