@@ -1,0 +1,42 @@
+name: Update News Buckets
+
+on:
+  schedule:
+    - cron: '0 9 * * *'    # 09:00 UTC every day
+    - cron: '0 16 * * *'   # 16:00 UTC every day
+  workflow_dispatch:        # manual trigger from GitHub UI
+
+jobs:
+  update-buckets:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests pandas yfinance schedule python-dotenv
+
+      - name: Configure git for push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/Mike7205/General_F2.git
+
+      - name: Run update
+        env:
+          ALPHA_VANTAGE_KEY: ${{ secrets.ALPHA_VANTAGE_KEY }}
+          FINNHUB_KEY:       ${{ secrets.FINNHUB_KEY }}
+          TWELVE_DATA_KEY:   ${{ secrets.TWELVE_DATA_KEY }}
+          EODHD_KEY:         ${{ secrets.EODHD_KEY }}
+          FRED_KEY:          ${{ secrets.FRED_KEY }}
+        run: python -c "from news_bucket import run_all_updates; run_all_updates()"
