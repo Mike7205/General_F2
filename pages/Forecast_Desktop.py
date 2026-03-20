@@ -208,14 +208,7 @@ for i, (ticker, name) in enumerate(FORE_TICKERS.items()):
         prev_price = float(hist["Close"].iloc[-2]) if len(hist) >= 2 else last_price
         delta_pct  = (last_price - prev_price) / prev_price * 100 if prev_price else 0.0
 
-        # ── Metric + LLM badge row ──────────────────────────────────────────
-        col_m, col_c = st.columns([1, 4])
-        with col_m:
-            st.metric(label=name, value=f"{last_price:,.4f}", delta=f"{delta_pct:+.2f}%")
-            # LLM direction badge placeholder – filled after LLM call below
-            llm_badge_slot = st.empty()
-
-        # ── LSTM forecast ───────────────────────────────────────────────────
+        # ── 1. Load LSTM forecast ───────────────────────────────────────────
         fore       = None
         corr_table = None
         if retrain:
@@ -232,7 +225,7 @@ for i, (ticker, name) in enumerate(FORE_TICKERS.items()):
                 except Exception as e:
                     st.error(f"Forecast error: {e}")
 
-        # ── LLM forecast ────────────────────────────────────────────────────
+        # ── 2. Load LLM forecast ────────────────────────────────────────────
         llm_prices    = None
         llm_dates     = None
         llm_direction = "neutral"
@@ -243,26 +236,35 @@ for i, (ticker, name) in enumerate(FORE_TICKERS.items()):
                     ticker, name, last_price
                 )
             if llm_prices_raw is None:
-                llm_badge_slot.warning(f"LLM: {llm_reason}")
+                st.warning(f"LLM: {llm_reason}")
             else:
                 llm_dates  = list(fore["Date"])
                 llm_prices = llm_prices_raw
+
+        # ── 3. Render: left col = metric + LLM badge | right col = chart ───
+        col_m, col_c = st.columns([1, 4])
+
+        with col_m:
+            st.metric(label=name, value=f"{last_price:,.4f}", delta=f"{delta_pct:+.2f}%")
+            if llm_prices is not None:
                 badge_color = {"bullish": "green", "bearish": "red"}.get(llm_direction, "gray")
-                llm_badge_slot.markdown(
+                st.markdown(
                     f"<br><b>LLM view:</b> "
                     f"<span style='color:{badge_color};font-weight:bold'>{llm_direction.upper()}</span>"
-                    f"<br><span style='font-size:12px;color:#555'>{llm_reason}</span>",
+                    f"<br><span style='font-size:12px;color:#777'>{llm_reason}</span>",
                     unsafe_allow_html=True
                 )
+            elif llm_reason:
+                st.warning(f"LLM: {llm_reason}")
 
-        # ── Chart (full width) ──────────────────────────────────────────────
-        if hist.empty:
-            st.warning(f"No data available for {name} ({ticker})")
-        else:
-            fig = build_chart(hist, fore, llm_dates, llm_prices, name, ticker)
-            st.plotly_chart(fig, use_container_width=True, theme="streamlit")
+        with col_c:
+            if hist.empty:
+                st.warning(f"No data available for {name} ({ticker})")
+            else:
+                fig = build_chart(hist, fore, llm_dates, llm_prices, name, ticker)
+                st.plotly_chart(fig, use_container_width=True, theme="streamlit")
 
-        # ── Forecast tables: two columns below chart ─────────────────────
+        # ── 4. Forecast tables: two columns below chart ──────────────────
         if fore is not None or llm_prices is not None:
             col_llm, col_lstm = st.columns(2)
 
@@ -278,8 +280,7 @@ for i, (ticker, name) in enumerate(FORE_TICKERS.items()):
 
             with col_lstm:
                 st.markdown(
-                    "<span style='color:#d62728;font-size:16px'>⬛</span> "
-                    "**LSTM forecast**",
+                    "<span style='color:#d62728;font-size:16px'>⬛</span> **LSTM forecast (technical)**",
                     unsafe_allow_html=True
                 )
                 if fore is not None:
