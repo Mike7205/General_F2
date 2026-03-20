@@ -9,6 +9,7 @@ FORE_TICKERS = {
     "CL=F":     "Crude Oil",
     "GC=F":     "Gold",
     "^N225":    "Nikkei 225",
+    "^GDAXI":   "DAX",
     "EURUSD=X": "EUR_USD",
     "JPY=X":    "USD_JPY",
 }
