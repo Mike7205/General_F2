@@ -14,7 +14,7 @@ FORE_TICKERS = {
     "JPY=X":    "USD_JPY",
 }
 
-st.title("Global Economy Indicators – Technical Analysis Dashboard")
+st.title("Global Economy Indicators – Forecast Dashboard")
 st.info("LSTM model | Features auto-selected by Pearson correlation [0.10, 0.35] | 5 business days forecast")
 st.markdown("---")
 
