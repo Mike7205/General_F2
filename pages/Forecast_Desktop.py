@@ -19,15 +19,15 @@ FORE_TICKERS = {
 }
 
 st.title("Global Economy Indicators – Forecast Dashboard")
-st.info("LSTM model | Features auto-selected by Pearson correlation [0.10, 0.35] | 5 business days forecast | LLM risk adjustment overlay")
+st.info("LSTM model | Features auto-selected by Pearson correlation [0.10, 0.35] | 5 business days forecast | LLM fundamental overlay")
 st.markdown("---")
 
 with st.sidebar:
     st.subheader("Forecast Settings")
-    hist_n    = st.slider("Historical sessions on chart", 5, 600, 30, 5)
-    corr_min  = st.slider("Min |correlation|", 0.01, 0.50, 0.10, 0.01)
-    corr_max  = st.slider("Max |correlation|", 0.10, 0.90, 0.35, 0.01)
-    retrain   = st.button("Retrain models", type="primary", use_container_width=True)
+    hist_n   = st.slider("Historical sessions on chart", 5, 600, 30, 5)
+    corr_min = st.slider("Min |correlation|", 0.01, 0.50, 0.10, 0.01)
+    corr_max = st.slider("Max |correlation|", 0.10, 0.90, 0.35, 0.01)
+    retrain  = st.button("Retrain models", type="primary", use_container_width=True)
     st.markdown("---")
     st.caption("Model: LSTM (128/64)\nTraining data: 1000 sessions | LSTM window: 60 steps\nHorizon: 5 business days | Data: Yahoo Finance")
     st.markdown("---")
@@ -75,14 +75,6 @@ def get_forecast_retrain(ticker, corr_min, corr_max):
 
 @st.cache_data(ttl=7200, show_spinner=False)
 def get_llm_forecast(ticker: str, name: str, last_price: float) -> tuple:
-    """
-    Calls Claude API for an independent 5-day fundamental forecast.
-    LLM provides day-by-day cumulative % returns based purely on
-    macro/geopolitical/fundamental analysis (no price-history patterns).
-
-    Returns (llm_prices: list[float], direction: str, reason: str).
-    llm_prices: 5 price levels D+1..D+5 derived from LLM's own view.
-    """
     try:
         api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
         if not api_key:
@@ -106,7 +98,7 @@ Respond ONLY with valid JSON, no markdown:
 {{"cum_returns": [-0.008, -0.005, -0.003, -0.001, 0.002], "direction": "bearish", "reason": "max 140 chars"}}
 
 cum_returns: array of 5 floats, each is the CUMULATIVE % return from today's price to that day.
-- Each value clamped to [-0.05, 0.05] (±5% max per day cumulative)
+- Each value clamped to [-0.05, 0.05] (±5% max cumulative)
 - Values should reflect a realistic fundamental-driven trajectory, not random noise."""
 
         msg = client.messages.create(
@@ -134,7 +126,6 @@ cum_returns: array of 5 floats, each is the CUMULATIVE % return from today's pri
 def build_chart(hist, fore, llm_dates, llm_prices, name, ticker):
     fig = go.Figure()
 
-    # Historical Close
     fig.add_trace(go.Scatter(
         x=hist["Date"], y=hist["Close"],
         name="Close", line=dict(color="#1f77b4", width=1.8),
@@ -145,12 +136,10 @@ def build_chart(hist, fore, llm_dates, llm_prices, name, ticker):
         last_date  = hist["Date"].iloc[-1]
         last_price = float(hist["Close"].iloc[-1])
 
-        # LSTM forecast – red dashed
         if fore is not None and not fore.empty:
-            fore_dates = [last_date] + list(fore["Date"])
-            fore_vals  = [last_price] + list(fore["Forecast"])
             fig.add_trace(go.Scatter(
-                x=fore_dates, y=fore_vals,
+                x=[last_date] + list(fore["Date"]),
+                y=[last_price] + list(fore["Forecast"]),
                 name="LSTM Forecast (technical)",
                 line=dict(color="#d62728", width=2.5, dash="dash"),
                 mode="lines+markers",
@@ -159,7 +148,6 @@ def build_chart(hist, fore, llm_dates, llm_prices, name, ticker):
                 hovertemplate="%{x}<br>LSTM: %{y:,.4f}<extra></extra>"
             ))
 
-        # LLM fundamental forecast – yellow solid
         if llm_dates is not None and llm_prices is not None:
             fig.add_trace(go.Scatter(
                 x=[last_date] + llm_dates,
@@ -172,7 +160,6 @@ def build_chart(hist, fore, llm_dates, llm_prices, name, ticker):
                 hovertemplate="%{x}<br>LLM: %{y:,.4f}<extra></extra>"
             ))
 
-        # Today separator
         x_str = pd.Timestamp(last_date).strftime("%Y-%m-%d")
         fig.add_shape(type="line", x0=x_str, x1=x_str, y0=0, y1=1,
                       xref="x", yref="paper",
@@ -194,109 +181,128 @@ def build_chart(hist, fore, llm_dates, llm_prices, name, ticker):
     return fig
 
 
+def _forecast_rows(dates, prices, last_price, color_hex):
+    """Render forecast rows: date | value | diff"""
+    for d, p in zip(dates, prices):
+        diff  = p - last_price
+        sign  = "+" if diff >= 0 else ""
+        color = "green" if diff >= 0 else "red"
+        st.markdown(
+            f"`{d}` &nbsp; **{p:,.4f}** "
+            f"<span style='color:{color};font-size:12px'>({sign}{diff:,.4f})</span>",
+            unsafe_allow_html=True
+        )
+
+
 tabs = st.tabs(list(FORE_TICKERS.values()))
 
 for i, (ticker, name) in enumerate(FORE_TICKERS.items()):
     with tabs[i]:
-        hist       = get_hist(ticker, hist_n)
+        hist = get_hist(ticker, hist_n)
+
+        # Retry once on empty (first-load network glitch)
+        if hist.empty:
+            hist = get_hist.clear() or get_hist(ticker, hist_n)
+
         last_price = float(hist["Close"].iloc[-1]) if len(hist) >= 1 else float("nan")
         prev_price = float(hist["Close"].iloc[-2]) if len(hist) >= 2 else last_price
         delta_pct  = (last_price - prev_price) / prev_price * 100 if prev_price else 0.0
 
+        # ── Metric row ──────────────────────────────────────────────────────
         col_m, col_c = st.columns([1, 4])
-
         with col_m:
             st.metric(label=name, value=f"{last_price:,.4f}", delta=f"{delta_pct:+.2f}%")
-            st.markdown("**Forecast D+1 to D+5:**")
 
-            fore       = None
-            corr_table = None
-            if retrain:
-                with st.spinner(f"Training LSTM for {name}..."):
-                    try:
-                        get_forecast.clear()
-                        fore, corr_table = get_forecast_retrain(ticker, corr_min, corr_max)
-                    except Exception as e:
-                        st.error(f"Training error: {e}")
+        # ── LSTM forecast ───────────────────────────────────────────────────
+        fore       = None
+        corr_table = None
+        if retrain:
+            with st.spinner(f"Training LSTM for {name}..."):
+                try:
+                    get_forecast.clear()
+                    fore, corr_table = get_forecast_retrain(ticker, corr_min, corr_max)
+                except Exception as e:
+                    st.error(f"Training error: {e}")
+        else:
+            with st.spinner(f"Loading model for {name}..."):
+                try:
+                    fore, corr_table = get_forecast(ticker, corr_min, corr_max)
+                except Exception as e:
+                    st.error(f"Forecast error: {e}")
+
+        # ── LLM forecast ────────────────────────────────────────────────────
+        llm_prices    = None
+        llm_dates     = None
+        llm_direction = "neutral"
+        llm_reason    = ""
+        if fore is not None and last_price > 0 and not pd.isna(last_price):
+            with st.spinner("LLM fundamental analysis..."):
+                llm_prices_raw, llm_direction, llm_reason = get_llm_forecast(
+                    ticker, name, last_price
+                )
+            if llm_prices_raw is None:
+                st.warning(f"LLM: {llm_reason}")
             else:
-                with st.spinner(f"Loading model for {name}..."):
-                    try:
-                        fore, corr_table = get_forecast(ticker, corr_min, corr_max)
-                    except Exception as e:
-                        st.error(f"Forecast error: {e}")
+                llm_dates  = list(fore["Date"])
+                llm_prices = llm_prices_raw
 
-            # LLM independent fundamental forecast
-            llm_prices    = None
-            llm_dates     = None
-            llm_direction = "neutral"
-            llm_reason    = ""
-            if fore is not None and last_price > 0:
-                with st.spinner("LLM fundamental analysis..."):
-                    llm_prices_raw, llm_direction, llm_reason = get_llm_forecast(
-                        ticker, name, last_price
-                    )
-                if llm_prices_raw is None:
-                    st.warning(f"LLM: {llm_reason}")
-                else:
-                    llm_dates  = list(fore["Date"])
-                    llm_prices = llm_prices_raw
+        # ── Chart (full width) ──────────────────────────────────────────────
+        if hist.empty:
+            st.warning(f"No data available for {name} ({ticker})")
+        else:
+            fig = build_chart(hist, fore, llm_dates, llm_prices, name, ticker)
+            st.plotly_chart(fig, use_container_width=True, theme="streamlit")
 
-                    badge_color = {"bullish": "green", "bearish": "red"}.get(llm_direction, "gray")
-                    st.markdown(
-                        f"<br><b>LLM view:</b> "
-                        f"<span style='color:{badge_color};font-weight:bold'>{llm_direction.upper()}</span>",
-                        unsafe_allow_html=True
-                    )
+        # ── Forecast tables: two columns below chart ─────────────────────
+        if fore is not None or llm_prices is not None:
+            col_llm, col_lstm = st.columns(2)
+
+            with col_llm:
+                badge_color = {"bullish": "green", "bearish": "red"}.get(llm_direction, "gray")
+                st.markdown(
+                    f"<span style='color:#f5c518;font-size:16px'>⬛</span> "
+                    f"**LLM forecast** &nbsp; "
+                    f"<span style='color:{badge_color};font-weight:bold'>{llm_direction.upper()}</span>",
+                    unsafe_allow_html=True
+                )
+                if llm_reason:
                     st.caption(llm_reason)
-                    st.markdown("---")
+                if llm_prices is not None:
+                    _forecast_rows(llm_dates, llm_prices, last_price, "#f5c518")
+                else:
+                    st.info("LLM forecast unavailable")
 
-                    st.markdown("**LLM forecast (yellow):**")
-                    for d, p in zip(llm_dates, llm_prices):
-                        diff  = p - last_price
-                        sign2 = "+" if diff >= 0 else ""
-                        color = "green" if diff >= 0 else "red"
-                        st.markdown(
-                            f"`{d}` &nbsp; **{p:,.4f}** "
-                            f"<span style='color:{color};font-size:12px'>({sign2}{diff:,.4f})</span>",
-                            unsafe_allow_html=True
-                        )
-
-            st.markdown("---")
-            st.markdown("**LSTM forecast (red):**")
-            if fore is not None:
-                for _, row in fore.iterrows():
-                    diff  = row["Forecast"] - last_price
-                    sign3 = "+" if diff >= 0 else ""
-                    color = "green" if diff >= 0 else "red"
-                    st.markdown(
-                        f"`{row['Date']}` &nbsp; **{row['Forecast']:,.4f}** "
-                        f"<span style='color:{color};font-size:12px'>({sign3}{diff:,.4f})</span>",
-                        unsafe_allow_html=True
+            with col_lstm:
+                st.markdown(
+                    "<span style='color:#d62728;font-size:16px'>⬛</span> "
+                    "**LSTM forecast**",
+                    unsafe_allow_html=True
+                )
+                if fore is not None:
+                    _forecast_rows(
+                        list(fore["Date"]),
+                        list(fore["Forecast"]),
+                        last_price, "#d62728"
                     )
 
-        with col_c:
-            if hist.empty:
-                st.warning(f"No data available for {name} ({ticker})")
-            else:
-                fig = build_chart(hist, fore, llm_dates, llm_prices, name, ticker)
-                st.plotly_chart(fig, use_container_width=True, theme="streamlit")
+        # ── Model inputs expander ───────────────────────────────────────────
+        if corr_table is not None:
+            selected_rows = corr_table[corr_table["selected"]]
+            n_sel = len(selected_rows)
+            with st.expander(f"Model inputs: {n_sel} variables selected  |  corr [{corr_min:.2f}, {corr_max:.2f}]"):
+                st.markdown("**Selected features (sorted by |correlation|):**")
+                for _, r in selected_rows.sort_values("abs_corr", ascending=False).iterrows():
+                    direction_f = "positive" if r["corr"] >= 0 else "negative"
+                    st.markdown(
+                        f"`{r['ticker']}` **{r['name']}** — "
+                        f"corr = **{r['corr']:+.4f}** ({direction_f})"
+                    )
+                st.markdown("---")
+                st.markdown("**All candidates:**")
+                display_df = corr_table[["name", "ticker", "corr", "abs_corr", "selected"]].copy()
+                display_df.columns = ["Name", "Ticker", "Correlation", "|Correlation|", "Selected"]
+                st.dataframe(display_df, use_container_width=True, hide_index=True)
 
-            if corr_table is not None:
-                selected_rows = corr_table[corr_table["selected"]]
-                n_sel = len(selected_rows)
-                with st.expander(f"Model inputs: {n_sel} variables selected  |  corr [{corr_min:.2f}, {corr_max:.2f}]"):
-                    st.markdown("**Selected features (sorted by |correlation|):**")
-                    for _, r in selected_rows.sort_values("abs_corr", ascending=False).iterrows():
-                        direction_f = "positive" if r["corr"] >= 0 else "negative"
-                        st.markdown(
-                            f"`{r['ticker']}` **{r['name']}** — "
-                            f"corr = **{r['corr']:+.4f}** ({direction_f})"
-                        )
-                    st.markdown("---")
-                    st.markdown("**All candidates:**")
-                    display_df = corr_table[["name", "ticker", "corr", "abs_corr", "selected"]].copy()
-                    display_df.columns = ["Name", "Ticker", "Correlation", "|Correlation|", "Selected"]
-                    st.dataframe(display_df, use_container_width=True, hide_index=True)
+        st.markdown("---")
 
-st.markdown("---")
-st.caption("Data © Yahoo Finance | LSTM D+5 Forecast | LLM Risk Overlay: Claude (Anthropic) | streamlit · plotly · tensorflow · yfinance")
+st.caption("Data © Yahoo Finance | LSTM D+5 Forecast | LLM Fundamental Overlay: Claude (Anthropic) | streamlit · plotly · tensorflow · yfinance")
