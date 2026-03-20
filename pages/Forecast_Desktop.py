@@ -24,7 +24,7 @@ st.markdown("---")
 
 with st.sidebar:
     st.subheader("Forecast Settings")
-    hist_n    = st.slider("Historical sessions on chart", 30, 600, 30, 10)
+    hist_n    = st.slider("Historical sessions on chart", 5, 600, 30, 5)
     corr_min  = st.slider("Min |correlation|", 0.01, 0.50, 0.10, 0.01)
     corr_max  = st.slider("Max |correlation|", 0.10, 0.90, 0.35, 0.01)
     retrain   = st.button("Retrain models", type="primary", use_container_width=True)
@@ -36,18 +36,28 @@ with st.sidebar:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_hist(ticker, n):
-    raw = yf.download(ticker, period="6y", interval="1d",
-                      progress=False, auto_adjust=True)
-    if isinstance(raw.columns, pd.MultiIndex):
-        raw.columns = [str(c[0]) for c in raw.columns]
-    col = raw["Close"]
-    if isinstance(col, pd.DataFrame):
-        col = col.iloc[:, 0]
-    col = col.squeeze()
-    df = col.reset_index()
-    df.columns = ["Date", "Close"]
-    df = df.dropna()
-    return df.tail(n).reset_index(drop=True)
+    try:
+        raw = yf.download(ticker, period="6y", interval="1d",
+                          progress=False, auto_adjust=True)
+        if raw is None or raw.empty:
+            return pd.DataFrame(columns=["Date", "Close"])
+        if isinstance(raw.columns, pd.MultiIndex):
+            raw.columns = [str(c[0]) for c in raw.columns]
+        if "Close" not in raw.columns:
+            return pd.DataFrame(columns=["Date", "Close"])
+        col = raw["Close"]
+        if isinstance(col, pd.DataFrame):
+            col = col.iloc[:, 0]
+        col = col.squeeze()
+        if not hasattr(col, "reset_index"):
+            return pd.DataFrame(columns=["Date", "Close"])
+        df = col.reset_index()
+        df.columns = ["Date", "Close"]
+        df = df.dropna()
+        return df.tail(n).reset_index(drop=True)
+    except Exception as e:
+        st.warning(f"Could not load history for {ticker}: {e}")
+        return pd.DataFrame(columns=["Date", "Close"])
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
