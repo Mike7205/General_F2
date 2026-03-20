@@ -208,10 +208,12 @@ for i, (ticker, name) in enumerate(FORE_TICKERS.items()):
         prev_price = float(hist["Close"].iloc[-2]) if len(hist) >= 2 else last_price
         delta_pct  = (last_price - prev_price) / prev_price * 100 if prev_price else 0.0
 
-        # ── Metric row ──────────────────────────────────────────────────────
+        # ── Metric + LLM badge row ──────────────────────────────────────────
         col_m, col_c = st.columns([1, 4])
         with col_m:
             st.metric(label=name, value=f"{last_price:,.4f}", delta=f"{delta_pct:+.2f}%")
+            # LLM direction badge placeholder – filled after LLM call below
+            llm_badge_slot = st.empty()
 
         # ── LSTM forecast ───────────────────────────────────────────────────
         fore       = None
@@ -241,10 +243,17 @@ for i, (ticker, name) in enumerate(FORE_TICKERS.items()):
                     ticker, name, last_price
                 )
             if llm_prices_raw is None:
-                st.warning(f"LLM: {llm_reason}")
+                llm_badge_slot.warning(f"LLM: {llm_reason}")
             else:
                 llm_dates  = list(fore["Date"])
                 llm_prices = llm_prices_raw
+                badge_color = {"bullish": "green", "bearish": "red"}.get(llm_direction, "gray")
+                llm_badge_slot.markdown(
+                    f"<br><b>LLM view:</b> "
+                    f"<span style='color:{badge_color};font-weight:bold'>{llm_direction.upper()}</span>"
+                    f"<br><span style='font-size:12px;color:#555'>{llm_reason}</span>",
+                    unsafe_allow_html=True
+                )
 
         # ── Chart (full width) ──────────────────────────────────────────────
         if hist.empty:
@@ -258,15 +267,10 @@ for i, (ticker, name) in enumerate(FORE_TICKERS.items()):
             col_llm, col_lstm = st.columns(2)
 
             with col_llm:
-                badge_color = {"bullish": "green", "bearish": "red"}.get(llm_direction, "gray")
                 st.markdown(
-                    f"<span style='color:#f5c518;font-size:16px'>⬛</span> "
-                    f"**LLM forecast** &nbsp; "
-                    f"<span style='color:{badge_color};font-weight:bold'>{llm_direction.upper()}</span>",
+                    "<span style='color:#f5c518;font-size:16px'>⬛</span> **LLM forecast (fundamental)**",
                     unsafe_allow_html=True
                 )
-                if llm_reason:
-                    st.caption(llm_reason)
                 if llm_prices is not None:
                     _forecast_rows(llm_dates, llm_prices, last_price, "#f5c518")
                 else:
