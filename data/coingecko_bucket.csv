@@ -1,2 +1,3 @@
 Date,^GSPC,^DJI,^IXIC,000001.SS,^HSI,^VIX,^RUT,^BVSP,^FTSE,^GDAXI,^N225,EURUSD=X,EURCHF=X,CNY=X,GBPUSD=X,JPY=X,EURPLN=X,PLN=X,RUB=X,DX-Y.NYB,^FVX,^TNX,^TYX,CL=F,GC=F,SI=F,BTC-USD,ETH-USD
-2026-03-19,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+2026-03-19 00:00:00,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+2026-03-20,,,,,,,,,,,,,,,,,,,,,,,,,,,"Bitcoin: price=$70023 | 24h change=1.07% | mktcap=$1,398,643,092,038 | vol=$40,053,639,850","Ethereum: price=$2,141.73 | 24h change=1.62% | mktcap=$257,949,340,917 | vol=$18,311,257,519"
