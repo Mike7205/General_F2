@@ -235,7 +235,9 @@ for i, (ticker, name) in enumerate(FORE_TICKERS.items()):
                     llm_prices_raw, llm_direction, llm_reason = get_llm_forecast(
                         ticker, name, last_price
                     )
-                if llm_prices_raw is not None:
+                if llm_prices_raw is None:
+                    st.warning(f"LLM: {llm_reason}")
+                else:
                     llm_dates  = list(fore["Date"])
                     llm_prices = llm_prices_raw
 
