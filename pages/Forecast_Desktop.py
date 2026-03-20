@@ -74,57 +74,64 @@ def get_forecast_retrain(ticker, corr_min, corr_max):
 
 
 @st.cache_data(ttl=7200, show_spinner=False)
-def get_llm_risk(ticker: str, name: str) -> tuple:
+def get_llm_forecast(ticker: str, name: str, last_price: float) -> tuple:
     """
-    Calls Claude API to get a fundamental/geopolitical risk adjustment factor
-    for the 5-day LSTM forecast.
-    Returns (risk_factor: float, direction: str, reason: str).
-    risk_factor: 1.0 = neutral, <1.0 = bearish, >1.0 = bullish (clamped 0.95–1.05)
+    Calls Claude API for an independent 5-day fundamental forecast.
+    LLM provides day-by-day cumulative % returns based purely on
+    macro/geopolitical/fundamental analysis (no price-history patterns).
+
+    Returns (llm_prices: list[float], direction: str, reason: str).
+    llm_prices: 5 price levels D+1..D+5 derived from LLM's own view.
     """
     try:
         api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
         if not api_key:
-            return 1.0, "neutral", "No ANTHROPIC_API_KEY in secrets"
+            return None, "neutral", "No ANTHROPIC_API_KEY in secrets"
 
         client = anthropic.Anthropic(api_key=api_key)
         today  = date.today().strftime("%Y-%m-%d")
 
-        prompt = f"""Today is {today}. You are a quantitative risk analyst.
-Analyze the current macroeconomic, geopolitical and fundamental outlook for: {name} (ticker: {ticker}).
+        prompt = f"""Today is {today}. You are an independent macro analyst.
+Instrument: {name} (ticker: {ticker}), current price: {last_price:.4f}
 
-Based on your knowledge, provide a SHORT-TERM (5 trading day) risk adjustment factor.
+Task: provide your OWN 5-day price forecast based SOLELY on:
+- macroeconomic fundamentals (rates, inflation, growth)
+- geopolitical events and sentiment
+- sector/commodity supply-demand dynamics
+- any other non-technical factor
 
-Respond ONLY with valid JSON – no markdown, no extra text:
-{{"risk_factor": 0.98, "direction": "bearish", "reason": "brief max 120 chars"}}
+Do NOT rely on chart patterns or price momentum — that is handled by a separate technical model.
 
-risk_factor rules:
-- 1.0  = neutral (no fundamental adjustment)
-- >1.0 = bullish fundamental bias (max 1.05)
-- <1.0 = bearish fundamental bias (min 0.95)
-Choose a value that reflects ONLY fundamental/geopolitical information NOT captured by price history."""
+Respond ONLY with valid JSON, no markdown:
+{{"cum_returns": [-0.008, -0.005, -0.003, -0.001, 0.002], "direction": "bearish", "reason": "max 140 chars"}}
+
+cum_returns: array of 5 floats, each is the CUMULATIVE % return from today's price to that day.
+- Each value clamped to [-0.05, 0.05] (±5% max per day cumulative)
+- Values should reflect a realistic fundamental-driven trajectory, not random noise."""
 
         msg = client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=200,
+            max_tokens=250,
             messages=[{"role": "user", "content": prompt}],
         )
 
         text = msg.content[0].text.strip()
-        # Strip markdown code fences if model adds them
         text = text.replace("```json", "").replace("```", "").strip()
         data = json.loads(text)
 
-        rf        = float(data.get("risk_factor", 1.0))
-        rf        = max(0.95, min(1.05, rf))          # hard clamp
+        raw_returns = data.get("cum_returns", [0, 0, 0, 0, 0])
+        cum_returns = [max(-0.05, min(0.05, float(r))) for r in raw_returns[:5]]
+        llm_prices  = [round(last_price * (1 + r), 4) for r in cum_returns]
+
         direction = data.get("direction", "neutral")
         reason    = data.get("reason", "")[:160]
-        return rf, direction, reason
+        return llm_prices, direction, reason
 
     except Exception as e:
-        return 1.0, "neutral", f"LLM error: {e}"
+        return None, "neutral", f"LLM error: {e}"
 
 
-def build_chart(hist, fore, fore_adj, name, ticker):
+def build_chart(hist, fore, llm_dates, llm_prices, name, ticker):
     fig = go.Figure()
 
     # Historical Close
@@ -134,35 +141,35 @@ def build_chart(hist, fore, fore_adj, name, ticker):
         hovertemplate="%{x|%Y-%m-%d}<br>Close: %{y:,.4f}<extra></extra>"
     ))
 
-    if fore is not None and not fore.empty and not hist.empty:
+    if not hist.empty:
         last_date  = hist["Date"].iloc[-1]
         last_price = float(hist["Close"].iloc[-1])
 
         # LSTM forecast – red dashed
-        fore_dates = [last_date] + list(fore["Date"])
-        fore_vals  = [last_price] + list(fore["Forecast"])
-        fig.add_trace(go.Scatter(
-            x=fore_dates, y=fore_vals,
-            name="LSTM Forecast D+5",
-            line=dict(color="#d62728", width=2.5, dash="dash"),
-            mode="lines+markers",
-            marker=dict(size=9, symbol="circle", color="#d62728",
-                        line=dict(color="white", width=1.5)),
-            hovertemplate="%{x}<br>LSTM: %{y:,.4f}<extra></extra>"
-        ))
-
-        # LLM-adjusted forecast – yellow solid
-        if fore_adj is not None and not fore_adj.empty:
-            adj_dates = [last_date] + list(fore_adj["Date"])
-            adj_vals  = [last_price] + list(fore_adj["Forecast_adj"])
+        if fore is not None and not fore.empty:
+            fore_dates = [last_date] + list(fore["Date"])
+            fore_vals  = [last_price] + list(fore["Forecast"])
             fig.add_trace(go.Scatter(
-                x=adj_dates, y=adj_vals,
-                name="LSTM × LLM Risk",
+                x=fore_dates, y=fore_vals,
+                name="LSTM Forecast (technical)",
+                line=dict(color="#d62728", width=2.5, dash="dash"),
+                mode="lines+markers",
+                marker=dict(size=9, symbol="circle", color="#d62728",
+                            line=dict(color="white", width=1.5)),
+                hovertemplate="%{x}<br>LSTM: %{y:,.4f}<extra></extra>"
+            ))
+
+        # LLM fundamental forecast – yellow solid
+        if llm_dates is not None and llm_prices is not None:
+            fig.add_trace(go.Scatter(
+                x=[last_date] + llm_dates,
+                y=[last_price] + llm_prices,
+                name="LLM Forecast (fundamental)",
                 line=dict(color="#f5c518", width=2.8),
                 mode="lines+markers",
-                marker=dict(size=9, symbol="diamond", color="#f5c518",
-                            line=dict(color="#333", width=1)),
-                hovertemplate="%{x}<br>Adjusted: %{y:,.4f}<extra></extra>"
+                marker=dict(size=10, symbol="diamond", color="#f5c518",
+                            line=dict(color="#555", width=1)),
+                hovertemplate="%{x}<br>LLM: %{y:,.4f}<extra></extra>"
             ))
 
         # Today separator
@@ -218,41 +225,39 @@ for i, (ticker, name) in enumerate(FORE_TICKERS.items()):
                     except Exception as e:
                         st.error(f"Forecast error: {e}")
 
-            # LLM risk adjustment
-            fore_adj   = None
-            risk_factor = 1.0
-            direction   = "neutral"
-            reason      = ""
-            if fore is not None:
-                with st.spinner("LLM risk analysis..."):
-                    risk_factor, direction, reason = get_llm_risk(ticker, name)
-                fore_adj = fore.copy()
-                fore_adj["Forecast_adj"] = (fore_adj["Forecast"] * risk_factor).round(4)
+            # LLM independent fundamental forecast
+            llm_prices    = None
+            llm_dates     = None
+            llm_direction = "neutral"
+            llm_reason    = ""
+            if fore is not None and last_price > 0:
+                with st.spinner("LLM fundamental analysis..."):
+                    llm_prices_raw, llm_direction, llm_reason = get_llm_forecast(
+                        ticker, name, last_price
+                    )
+                if llm_prices_raw is not None:
+                    llm_dates  = list(fore["Date"])
+                    llm_prices = llm_prices_raw
 
-                # Direction badge
-                badge_color = {"bullish": "green", "bearish": "red"}.get(direction, "gray")
-                rf_pct = (risk_factor - 1.0) * 100
-                sign   = "+" if rf_pct >= 0 else ""
-                st.markdown(
-                    f"<br><b>LLM Risk Factor:</b> "
-                    f"<span style='color:{badge_color};font-weight:bold'>"
-                    f"{sign}{rf_pct:.2f}% ({direction})</span>",
-                    unsafe_allow_html=True
-                )
-                st.caption(reason)
-                st.markdown("---")
-
-                # Adjusted forecast values
-                st.markdown("**Adjusted forecast (yellow):**")
-                for _, row in fore_adj.iterrows():
-                    diff  = row["Forecast_adj"] - last_price
-                    sign2 = "+" if diff >= 0 else ""
-                    color = "green" if diff >= 0 else "red"
+                    badge_color = {"bullish": "green", "bearish": "red"}.get(llm_direction, "gray")
                     st.markdown(
-                        f"`{row['Date']}` &nbsp; **{row['Forecast_adj']:,.4f}** "
-                        f"<span style='color:{color};font-size:12px'>({sign2}{diff:,.4f})</span>",
+                        f"<br><b>LLM view:</b> "
+                        f"<span style='color:{badge_color};font-weight:bold'>{llm_direction.upper()}</span>",
                         unsafe_allow_html=True
                     )
+                    st.caption(llm_reason)
+                    st.markdown("---")
+
+                    st.markdown("**LLM forecast (yellow):**")
+                    for d, p in zip(llm_dates, llm_prices):
+                        diff  = p - last_price
+                        sign2 = "+" if diff >= 0 else ""
+                        color = "green" if diff >= 0 else "red"
+                        st.markdown(
+                            f"`{d}` &nbsp; **{p:,.4f}** "
+                            f"<span style='color:{color};font-size:12px'>({sign2}{diff:,.4f})</span>",
+                            unsafe_allow_html=True
+                        )
 
             st.markdown("---")
             st.markdown("**LSTM forecast (red):**")
@@ -271,7 +276,7 @@ for i, (ticker, name) in enumerate(FORE_TICKERS.items()):
             if hist.empty:
                 st.warning(f"No data available for {name} ({ticker})")
             else:
-                fig = build_chart(hist, fore, fore_adj, name, ticker)
+                fig = build_chart(hist, fore, llm_dates, llm_prices, name, ticker)
                 st.plotly_chart(fig, use_container_width=True, theme="streamlit")
 
             if corr_table is not None:
