@@ -29,7 +29,7 @@ with st.sidebar:
     corr_max  = st.slider("Max |correlation|", 0.10, 0.90, 0.35, 0.01)
     retrain   = st.button("Retrain models", type="primary", use_container_width=True)
     st.markdown("---")
-    st.caption("Model: LSTM (128/64)\nWindow: 60 sessions | Horizon: 5 business days\nData: Yahoo Finance")
+    st.caption("Model: LSTM (128/64)\nTraining data: 1000 sessions | LSTM window: 60 steps\nHorizon: 5 business days | Data: Yahoo Finance")
     st.markdown("---")
     st.caption("© 2026 Michal Lesniewski")
 
