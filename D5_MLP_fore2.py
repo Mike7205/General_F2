@@ -1,13 +1,14 @@
 # D5_MLP_fore2.py
-# Multivariate Neural Network Forecaster – 5 business days ahead
-# Adapted from D5_LSTM_upgrade.py:
-#   - Multiple correlated instruments as features (like the 22-variable EUR/PLN model)
-#   - Returns computed for ALL variables (consistent scale, no level drift)
-#   - MinMaxScaler fitted on train set only (no data leakage)
-#   - Sliding windows: TIME_STEP rows x N_FEATURES columns
-#   - MLPRegressor (sklearn) – Python 3.14 compatible, no TensorFlow needed
-#   - Inverse transform via dummy array matching scaler dimensionality
-#   - Model saved per ticker to avoid retraining on every run
+# Multivariate LSTM Forecaster with automatic feature selection via Pearson correlation.
+# For each target ticker:
+#   1. Downloads all 28 candidate tickers from Comm15_new.py
+#   2. Computes pct_change returns for all
+#   3. Selects features where corr_min <= |Pearson correlation with target| <= corr_max
+#   4. Trains LSTM (TensorFlow/Keras) on selected features
+# LSTM follows D5_LSTM_upgrade.py principles:
+#   - MinMaxScaler fit on train only (no data leakage)
+#   - EarlyStopping(patience=15) + ModelCheckpoint
+#   - Inverse transform via dummy array
 
 import logging
 from datetime import datetime, timedelta
@@ -17,50 +18,41 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 from joblib import dump, load
-from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import MinMaxScaler
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
+from tensorflow.keras.layers import LSTM, Dense
+from tensorflow.keras.models import Sequential, load_model
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Constants
-# ─────────────────────────────────────────────────────────────────────────────
 FORECAST_H = 5
 TIME_STEP  = 60
 PAST       = 1000
+CORR_MIN   = 0.10
+CORR_MAX   = 0.35
 MODELS_DIR = Path("models")
 MODELS_DIR.mkdir(exist_ok=True)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Feature map – col 0 is the TARGET, cols 1..N are explanatory variables
-# ─────────────────────────────────────────────────────────────────────────────
-FEATURE_MAP: dict = {
-    "^GSPC": ["^VIX", "^DJI", "^IXIC", "^TNX", "DX-Y.NYB", "EURUSD=X", "CL=F", "GC=F"],
-    "^HSI":  ["000001.SS", "CNY=X", "^GSPC", "^N225", "CL=F", "^VIX"],
-    "CL=F":  ["DX-Y.NYB", "^GSPC", "GC=F", "NG=F", "^TNX", "^VIX"],
-    "GC=F":  ["DX-Y.NYB", "^TNX", "SI=F", "EURUSD=X", "^GSPC", "^VIX"],
-    "^N225": ["JPY=X", "^GSPC", "^HSI", "^DJI", "CL=F", "^VIX"],
-    "EURUSD=X": ["DX-Y.NYB", "^TNX", "^FVX", "GC=F", "^GSPC", "^VIX"],
-    "JPY=X": ["^TNX", "^TYX", "GC=F", "DX-Y.NYB", "EURUSD=X", "^VIX"],
-}
-
-FEATURE_NAMES: dict = {
-    "^GSPC":    ["VIX", "DJI", "NASDAQ", "10Y_Bond", "DXY", "EUR_USD", "Oil", "Gold"],
-    "^HSI":     ["SSE", "USD_CNY", "SP500", "Nikkei", "Oil", "VIX"],
-    "CL=F":     ["DXY", "SP500", "Gold", "Nat_Gas", "10Y_Bond", "VIX"],
-    "GC=F":     ["DXY", "10Y_Bond", "Silver", "EUR_USD", "SP500", "VIX"],
-    "^N225":    ["USD_JPY", "SP500", "HSI", "DJI", "Oil", "VIX"],
-    "EURUSD=X": ["DXY", "10Y_Bond", "5Y_Bond", "Gold", "SP500", "VIX"],
-    "JPY=X":    ["10Y_Bond", "30Y_Bond", "Gold", "DXY", "EUR_USD", "VIX"],
+ALL_CANDIDATES = {
+    "^GSPC": "SP_500", "^DJI": "DJI30", "^IXIC": "NASDAQ",
+    "000001.SS": "SSE", "^HSI": "HANG_SENG", "^VIX": "VIX",
+    "^RUT": "Russell2000", "^BVSP": "IBOVESPA", "^FTSE": "FTSE100",
+    "^GDAXI": "DAX", "^N225": "Nikkei225", "EURUSD=X": "EUR_USD",
+    "EURCHF=X": "EUR_CHF", "CNY=X": "USD_CNY", "GBPUSD=X": "USD_GBP",
+    "JPY=X": "USD_JPY", "EURPLN=X": "EUR_PLN", "PLN=X": "PLN_USD",
+    "RUB=X": "USD_RUB", "DX-Y.NYB": "DXY", "^FVX": "5Y_Bond",
+    "^TNX": "10Y_Bond", "^TYX": "30Y_Bond", "CL=F": "Crude_Oil",
+    "GC=F": "Gold", "SI=F": "Silver", "BTC-USD": "Bitcoin",
+    "ETH-USD": "Ethereum",
 }
 
 
-def _safe(ticker: str) -> str:
+def _safe(ticker):
     return ticker.replace("=", "_").replace("^", "").replace("-", "_").replace(".", "_")
 
 
-def _next_workdays(start: datetime, n: int) -> list:
+def _next_workdays(start, n):
     days, cur = [], start
     while len(days) < n:
         if cur.weekday() < 5:
@@ -69,128 +61,151 @@ def _next_workdays(start: datetime, n: int) -> list:
     return days
 
 
-def download_data(target: str, past: int = PAST) -> pd.DataFrame:
-    """
-    Downloads target + all feature tickers (mirrors model_f() from D5_LSTM_upgrade.py).
-    Returns DataFrame aligned on target calendar; features forward-filled.
-    Col 0 = target Close, cols 1..N = feature Closes.
-    """
-    feature_tickers = FEATURE_MAP[target]
-    all_tickers = [target] + feature_tickers
-    log.info(f"Downloading {len(all_tickers)} tickers for {target}")
-
+def download_candidates(past=PAST):
+    """Downloads all 28 candidate tickers, returns pct_change returns DataFrame."""
+    log.info(f"Downloading {len(ALL_CANDIDATES)} candidate tickers...")
     frames = {}
-    for tk in all_tickers:
-        raw = yf.download(tk, period="8y", interval="1d", progress=False, auto_adjust=True)
+    for tk in ALL_CANDIDATES:
+        try:
+            raw = yf.download(tk, period="8y", interval="1d",
+                              progress=False, auto_adjust=True)
+            if isinstance(raw.columns, pd.MultiIndex):
+                raw.columns = [c[0] for c in raw.columns]
+            frames[tk] = raw[["Close"]].rename(columns={"Close": tk})
+        except Exception as e:
+            log.warning(f"Could not download {tk}: {e}")
+    df = pd.concat(frames.values(), axis=1)
+    df = df.ffill().dropna(how="all").tail(past + 1)
+    returns = df.pct_change().iloc[1:].fillna(0)
+    log.info(f"Candidate returns shape: {returns.shape}")
+    return returns
+
+
+def select_features(target, returns_df, corr_min=CORR_MIN, corr_max=CORR_MAX):
+    """
+    Selects features where corr_min <= |Pearson correlation with target| <= corr_max.
+    Returns (selected_tickers list, full corr_table DataFrame).
+    """
+    if target not in returns_df.columns:
+        raise ValueError(f"Target {target} not in returns DataFrame")
+
+    corr_all = returns_df.corr()[target].drop(target)
+    abs_corr = corr_all.abs()
+    selected = abs_corr[(abs_corr >= corr_min) & (abs_corr <= corr_max)].index.tolist()
+
+    log.info(f"[{corr_min}, {corr_max}] for {target}: {len(selected)}/{len(corr_all)} selected")
+
+    if len(selected) == 0:
+        log.warning(f"No features in [{corr_min}, {corr_max}] – using top 5 by closest to midpoint")
+        mid = (corr_min + corr_max) / 2
+        selected = abs_corr.sub(mid).abs().nsmallest(5).index.tolist()
+
+    corr_table = pd.DataFrame({
+        "ticker":   corr_all.index,
+        "name":     [ALL_CANDIDATES.get(t, t) for t in corr_all.index],
+        "corr":     corr_all.values.round(4),
+        "abs_corr": abs_corr.values.round(4),
+        "selected": [t in selected for t in corr_all.index],
+    }).sort_values("abs_corr", ascending=False).reset_index(drop=True)
+
+    return selected, corr_table
+
+
+def download_aligned(target, features, past=PAST):
+    """Downloads target + selected features, aligns on target calendar."""
+    tickers = [target] + features
+    frames = {}
+    for tk in tickers:
+        raw = yf.download(tk, period="8y", interval="1d",
+                          progress=False, auto_adjust=True)
         if isinstance(raw.columns, pd.MultiIndex):
             raw.columns = [c[0] for c in raw.columns]
         frames[tk] = raw[["Close"]].rename(columns={"Close": tk})
-
     base = frames[target].tail(past)
-    for tk in feature_tickers:
-        base = base.join(frames[tk], how="left")
-
+    for tk in features:
+        if tk in frames:
+            base = base.join(frames[tk], how="left")
     base = base.ffill().dropna()
-    log.info(f"Aligned data: {base.shape[0]} sessions x {base.shape[1]} instruments")
+    log.info(f"Aligned: {base.shape[0]} sessions x {base.shape[1]} instruments")
     return base
 
 
-def compute_returns(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Computes daily pct_change for ALL columns (mirrors data_set_eur() fix #1).
-    Col 0 stays target. Drops first row (NaN) and fills any remaining NaNs with 0.
-    """
-    rr = df.pct_change().iloc[1:].fillna(0)
-    return rr
+def compute_returns(df):
+    return df.pct_change().iloc[1:].fillna(0)
 
 
-def build_windows(scaled: np.ndarray, time_step: int, horizon: int):
-    """
-    Mirrors create_dataset() from D5_LSTM_upgrade.py.
-    X: (n_samples, time_step * n_features) – flattened for MLPRegressor
-    y: (n_samples, horizon)               – target column (col 0) only
-    """
+def build_windows(scaled, time_step, horizon):
+    """3D windows for LSTM: X shape (samples, time_step, n_features)."""
     X, y = [], []
-    n = len(scaled)
-    for i in range(n - time_step - horizon):
-        X.append(scaled[i: i + time_step].flatten())
+    for i in range(len(scaled) - time_step - horizon):
+        X.append(scaled[i: i + time_step, :])
         y.append(scaled[i + time_step: i + time_step + horizon, 0])
     return np.array(X), np.array(y)
 
 
-def train_or_load(target: str, rr: pd.DataFrame, retrain: bool = False):
-    """
-    Mirrors LSTM_D5_Model() from D5_LSTM_upgrade.py.
-    Scaler fitted on train only (fix #2). Model saved to .joblib (fix #4).
-    Returns (model, scaler).
-    """
+def train_or_load(target, rr, retrain=False):
+    """Trains LSTM or loads saved model. Scaler fit on train only."""
     safe        = _safe(target)
-    model_path  = MODELS_DIR / f"{safe}_f2_model.joblib"
-    scaler_path = MODELS_DIR / f"{safe}_f2_scaler.joblib"
+    model_path  = MODELS_DIR / f"{safe}_lstm.keras"
+    scaler_path = MODELS_DIR / f"{safe}_lstm_scaler.joblib"
 
     if retrain:
         for p in (model_path, scaler_path):
             if p.exists():
                 p.unlink()
-        log.info(f"Deleted old model for {target}")
 
     arr     = rr.values.astype(float)
     tr_size = int(len(arr) * 0.8)
+    n_feat  = arr.shape[1]
 
     if not model_path.exists():
-        scaler   = MinMaxScaler(feature_range=(0, 1))
-        tr_sc    = scaler.fit_transform(arr[:tr_size])   # fit on train only
-        te_sc    = scaler.transform(arr[tr_size:])       # transform test (no leakage)
+        scaler = MinMaxScaler(feature_range=(0, 1))
+        tr_sc  = scaler.fit_transform(arr[:tr_size])
+        te_sc  = scaler.transform(arr[tr_size:])
         dump(scaler, scaler_path)
 
         X_tr, y_tr = build_windows(tr_sc, TIME_STEP, FORECAST_H)
         X_te, y_te = build_windows(te_sc, TIME_STEP, FORECAST_H)
 
-        n_features = arr.shape[1]
-        input_dim  = TIME_STEP * n_features
-        log.info(f"Training: {n_features} features x {TIME_STEP} steps = {input_dim} inputs")
+        log.info(f"Training LSTM {target}: ({TIME_STEP},{n_feat}) | train={len(X_tr)}")
 
-        model = MLPRegressor(
-            hidden_layer_sizes=(256, 128, 64),
-            activation="relu",
-            solver="adam",
-            max_iter=600,
-            early_stopping=True,
-            validation_fraction=0.1,
-            n_iter_no_change=25,
-            learning_rate_init=0.001,
-            random_state=42,
-            verbose=False,
-        )
-        model.fit(X_tr, y_tr)
-        dump(model, model_path)
-        log.info(f"Model saved: {model_path}")
+        model = Sequential([
+            LSTM(128, return_sequences=True, input_shape=(TIME_STEP, n_feat)),
+            LSTM(64,  return_sequences=False),
+            Dense(FORECAST_H),
+        ])
+        model.compile(loss="mean_squared_error", optimizer="adam")
+        model.fit(X_tr, y_tr,
+                  validation_data=(X_te, y_te),
+                  epochs=200, batch_size=32,
+                  callbacks=[
+                      EarlyStopping(monitor="val_loss", patience=15,
+                                    restore_best_weights=True, verbose=0),
+                      ModelCheckpoint(str(model_path), monitor="val_loss",
+                                      save_best_only=True, verbose=0),
+                  ], verbose=0)
+        log.info(f"LSTM saved: {model_path}")
     else:
-        model  = load(model_path)
+        model  = load_model(str(model_path))
         scaler = load(scaler_path)
-        log.info(f"Loaded model: {model_path}")
+        log.info(f"Loaded LSTM: {model_path}")
 
     return model, scaler
 
 
-def make_forecast(target: str, raw_df: pd.DataFrame, model, scaler) -> pd.DataFrame:
-    """
-    Mirrors D5_eur_forecast() from D5_LSTM_upgrade.py.
-    Inverse transform via dummy array (fix #3): insert predicted col-0 values
-    into a zeros array of full feature width, invert, then extract col 0.
-    """
+def make_forecast(target, raw_df, model, scaler):
+    """Forecasts 5 business days ahead. Inverse transform via dummy array."""
     rr     = compute_returns(raw_df)
     arr    = rr.values.astype(float)
     n_feat = arr.shape[1]
 
     full_sc  = scaler.transform(arr)
-    last_win = full_sc[-TIME_STEP:].flatten().reshape(1, -1)
-    pred_sc  = model.predict(last_win)[0]   # shape (FORECAST_H,) – scaled target returns
+    last_win = np.expand_dims(full_sc[-TIME_STEP:], axis=0)
+    pred_sc  = model.predict(last_win, verbose=0)[0]
 
-    # Inverse transform via dummy (fix #3 from D5_LSTM_upgrade.py)
     dummy       = np.zeros((FORECAST_H, n_feat))
     dummy[:, 0] = pred_sc
-    pred_rr     = scaler.inverse_transform(dummy)[:, 0]   # unscaled target returns
+    pred_rr     = scaler.inverse_transform(dummy)[:, 0]
 
     last_price = float(raw_df.iloc[-1, 0])
     prices, price = [], last_price
@@ -199,32 +214,21 @@ def make_forecast(target: str, raw_df: pd.DataFrame, model, scaler) -> pd.DataFr
         prices.append(round(price, 4))
 
     workdays = _next_workdays(datetime.today(), FORECAST_H)
-    result   = pd.DataFrame({"Date": workdays, "Forecast": prices})
-
-    log.info(f"Forecast {target} (last={last_price:.4f}): {prices}")
-    return result
+    return pd.DataFrame({"Date": workdays, "Forecast": prices})
 
 
-def forecast_ticker(ticker: str, past: int = PAST, retrain: bool = False) -> pd.DataFrame:
+def forecast_ticker(ticker, past=PAST, retrain=False,
+                    corr_min=CORR_MIN, corr_max=CORR_MAX):
     """
-    Public API: full pipeline – download, returns, train/load, forecast.
-    Returns DataFrame(Date, Forecast) with price-level predictions.
+    Full pipeline. Returns (forecast_df, corr_table).
+    forecast_df : DataFrame(Date, Forecast) – price level predictions
+    corr_table  : DataFrame with all 27 candidates, their correlations,
+                  and selected flag
     """
-    if ticker not in FEATURE_MAP:
-        raise ValueError(f"Ticker '{ticker}' not supported. Use: {list(FEATURE_MAP.keys())}")
-    raw_df        = download_data(ticker, past)
-    rr            = compute_returns(raw_df)
-    model, scaler = train_or_load(ticker, rr, retrain)
-    return make_forecast(ticker, raw_df, model, scaler)
-
-
-def get_feature_info(ticker: str) -> dict:
-    """Returns feature metadata for UI display."""
-    features = FEATURE_MAP.get(ticker, [])
-    names    = FEATURE_NAMES.get(ticker, features)
-    n_feat   = len(features) + 1
-    return {
-        "n_features": n_feat,
-        "input_size": TIME_STEP * n_feat,
-        "features":   list(zip(features, names)),
-    }
+    cand_ret           = download_candidates(past)
+    selected, corr_tbl = select_features(ticker, cand_ret, corr_min, corr_max)
+    raw_df             = download_aligned(ticker, selected, past)
+    rr                 = compute_returns(raw_df)
+    model, scaler      = train_or_load(ticker, rr, retrain)
+    forecast           = make_forecast(ticker, raw_df, model, scaler)
+    return forecast, corr_tbl
