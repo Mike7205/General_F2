@@ -61,22 +61,40 @@ def _next_workdays(start, n):
     return days
 
 
+def _dl_close(ticker) -> pd.Series | None:
+    """Downloads a single ticker and returns its Close as a clean 1-D Series."""
+    try:
+        raw = yf.download(ticker, period="8y", interval="1d",
+                          progress=False, auto_adjust=True)
+        if raw.empty:
+            return None
+        if isinstance(raw.columns, pd.MultiIndex):
+            raw.columns = [str(c[0]) for c in raw.columns]
+        col = raw["Close"]
+        if isinstance(col, pd.DataFrame):
+            col = col.iloc[:, 0]
+        return col.squeeze().rename(ticker)
+    except Exception as e:
+        log.warning(f"Could not download {ticker}: {e}")
+        return None
+
+
 def download_candidates(past=PAST):
     """Downloads all 28 candidate tickers, returns pct_change returns DataFrame."""
     log.info(f"Downloading {len(ALL_CANDIDATES)} candidate tickers...")
-    frames = {}
+    series = {}
     for tk in ALL_CANDIDATES:
-        try:
-            raw = yf.download(tk, period="8y", interval="1d",
-                              progress=False, auto_adjust=True)
-            if isinstance(raw.columns, pd.MultiIndex):
-                raw.columns = [c[0] for c in raw.columns]
-            frames[tk] = raw[["Close"]].rename(columns={"Close": tk})
-        except Exception as e:
-            log.warning(f"Could not download {tk}: {e}")
-    df = pd.concat(frames.values(), axis=1)
+        s = _dl_close(tk)
+        if s is not None:
+            series[tk] = s
+    df = pd.DataFrame(series)
     df = df.ffill().dropna(how="all").tail(past + 1)
     returns = df.pct_change().iloc[1:].fillna(0)
+    # Rebuild as plain DataFrame to guarantee pure 2-D structure
+    returns = pd.DataFrame(
+        {c: returns[c].to_numpy() for c in returns.columns},
+        index=returns.index,
+    )
     log.info(f"Candidate returns shape: {returns.shape}")
     return returns
 
@@ -113,21 +131,25 @@ def select_features(target, returns_df, corr_min=CORR_MIN, corr_max=CORR_MAX):
 
 def download_aligned(target, features, past=PAST):
     """Downloads target + selected features, aligns on target calendar."""
-    tickers = [target] + features
-    frames = {}
+    tickers = [target] + [f for f in features if f != target]
+    series = {}
     for tk in tickers:
-        raw = yf.download(tk, period="8y", interval="1d",
-                          progress=False, auto_adjust=True)
-        if isinstance(raw.columns, pd.MultiIndex):
-            raw.columns = [c[0] for c in raw.columns]
-        frames[tk] = raw[["Close"]].rename(columns={"Close": tk})
-    base = frames[target].tail(past)
+        s = _dl_close(tk)
+        if s is not None:
+            series[tk] = s
+    base_s = series[target].tail(past)
+    df = base_s.to_frame(name=target)
     for tk in features:
-        if tk in frames:
-            base = base.join(frames[tk], how="left")
-    base = base.ffill().dropna()
-    log.info(f"Aligned: {base.shape[0]} sessions x {base.shape[1]} instruments")
-    return base
+        if tk in series and tk != target:
+            df = df.join(series[tk].rename(tk), how="left")
+    df = df.ffill().dropna()
+    # Rebuild as plain DataFrame to guarantee pure 2-D structure
+    df = pd.DataFrame(
+        {c: df[c].to_numpy() for c in df.columns},
+        index=df.index,
+    )
+    log.info(f"Aligned: {df.shape[0]} sessions x {df.shape[1]} instruments")
+    return df
 
 
 def compute_returns(df):
@@ -154,7 +176,9 @@ def train_or_load(target, rr, retrain=False):
             if p.exists():
                 p.unlink()
 
-    arr     = rr.values.astype(float)
+    arr = np.asarray(rr, dtype=float)
+    if arr.ndim == 1:
+        arr = arr.reshape(-1, 1)
     tr_size = int(len(arr) * 0.8)
     n_feat  = arr.shape[1]
 
@@ -195,8 +219,10 @@ def train_or_load(target, rr, retrain=False):
 
 def make_forecast(target, raw_df, model, scaler):
     """Forecasts 5 business days ahead. Inverse transform via dummy array."""
-    rr     = compute_returns(raw_df)
-    arr    = rr.values.astype(float)
+    rr  = compute_returns(raw_df)
+    arr = np.asarray(rr, dtype=float)
+    if arr.ndim == 1:
+        arr = arr.reshape(-1, 1)
     n_feat = arr.shape[1]
 
     full_sc  = scaler.transform(arr)
