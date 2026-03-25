@@ -83,28 +83,71 @@ def get_llm_forecast(ticker: str, name: str, last_price: float) -> tuple:
         client = OpenAI(api_key=api_key, base_url="https://api.x.ai/v1")
         today  = date.today().strftime("%Y-%m-%d")
 
-        prompt = f"""Today is {today}. You are an independent macro analyst.
-Instrument: {name} (ticker: {ticker}), current price: {last_price:.4f}
+        prompt = f"""Today is {today}. You are a senior independent macro strategist with deep expertise in global financial markets.
 
-Task: provide your OWN 5-day price forecast based SOLELY on:
-- macroeconomic fundamentals (rates, inflation, growth)
-- geopolitical events and sentiment
-- sector/commodity supply-demand dynamics
-- any other non-technical factor
+INSTRUMENT: {name} (ticker: {ticker}) | Current price: {last_price:.4f}
 
-Do NOT rely on chart patterns or price momentum — that is handled by a separate technical model.
+TASK: Conduct a deep FUNDAMENTAL analysis (NO technical analysis) for the next 5 business days.
+Your analysis must cover ALL relevant factors from the list below and synthesize them into a price path.
 
-Respond ONLY with valid JSON, no markdown:
-{{"cum_returns": [-0.008, -0.005, -0.003, -0.001, 0.002], "direction": "bearish", "reason": "max 140 chars"}}
+=== ANALYTICAL FRAMEWORK ===
 
-cum_returns: array of 5 floats, each is the CUMULATIVE % return from today's price to that day.
-- Each value clamped to [-0.05, 0.05] (±5% max cumulative)
-- Values should reflect a realistic fundamental-driven trajectory, not random noise."""
+1. MONETARY POLICY & CENTRAL BANKS
+   - Recent and expected decisions by Fed, ECB, BOJ, PBoC, BOE (whichever are relevant to this instrument)
+   - Forward guidance, dot plots, inflation targets vs. actual CPI/PPI
+   - Real interest rate differential impact on FX and risk assets
+
+2. MACROECONOMIC FUNDAMENTALS
+   - GDP growth trajectory (US, EU, China, Japan — as relevant)
+   - Labor market conditions (NFP, unemployment, wages)
+   - Inflation dynamics and surprises vs. consensus
+   - PMI, ISM, consumer confidence, retail sales trends
+   - Credit conditions, yield curve shape (inversion/steepening)
+
+3. GEOPOLITICS & GLOBAL RISK
+   - Active conflicts and escalation/de-escalation signals
+   - Trade policy: tariffs, sanctions, supply chain disruptions
+   - Political elections, regime changes, policy uncertainty
+   - OPEC+ decisions (for oil and energy-linked assets)
+   - US-China relations, Taiwan Strait, Middle East, Ukraine/Russia
+
+4. SECTOR & ASSET-SPECIFIC DRIVERS
+   - For EQUITIES (S&P500, Nikkei, DAX, Hang Seng): earnings season, sector rotation, risk-on/off sentiment, VIX
+   - For COMMODITIES (Crude Oil, Gold): supply/demand balance, inventory data (EIA/API), USD strength, safe-haven flows
+   - For FX (EUR/USD, USD/JPY): interest rate differentials, current account, intervention risk, carry dynamics
+   - Corporate earnings surprises and guidance revisions
+
+5. SENTIMENT & CAPITAL FLOWS
+   - Institutional positioning (COT reports, fund flows)
+   - Credit spreads (HY vs. IG), equity risk premium
+   - Safe-haven demand vs. risk appetite
+   - Dollar index (DXY) trajectory as cross-asset driver
+
+6. KEY SCHEDULED EVENTS IN NEXT 5 DAYS
+   - Central bank meetings, Fed speakers
+   - Economic data releases (CPI, NFP, GDP, PMI)
+   - Major earnings reports
+   - Geopolitical flashpoints or scheduled political events
+
+=== OUTPUT FORMAT ===
+Respond ONLY with valid JSON, no markdown, no explanation outside JSON:
+{{"cum_returns": [-0.008, -0.005, -0.003, -0.001, 0.002], "direction": "bearish", "reason": "max 160 chars"}}
+
+RULES:
+- cum_returns: 5 floats = CUMULATIVE % return from today to each of the next 5 business days
+- Each value clamped to [-0.05, 0.05] (max ±5% cumulative move)
+- Direction: one of "bullish", "bearish", "neutral"
+- Reason: single sentence, max 160 chars, cite the DOMINANT fundamental driver
+- Do NOT use chart patterns, support/resistance, or any technical indicator — that is handled by a separate model
+- Be realistic: avoid extreme values unless fundamentals strongly justify them"""
 
         msg = client.chat.completions.create(
             model="grok-3-mini",
-            max_tokens=250,
-            messages=[{"role": "user", "content": prompt}],
+            max_tokens=400,
+            messages=[
+                {"role": "system", "content": "You are a senior macro strategist. Respond only with valid JSON, no markdown."},
+                {"role": "user", "content": prompt},
+            ],
         )
 
         text = msg.choices[0].message.content.strip()
