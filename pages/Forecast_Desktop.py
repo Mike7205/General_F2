@@ -1,7 +1,7 @@
 import json
 from datetime import date
 
-import anthropic
+from openai import OpenAI
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -76,11 +76,11 @@ def get_forecast_retrain(ticker, corr_min, corr_max):
 @st.cache_data(ttl=7200, show_spinner=False)
 def get_llm_forecast(ticker: str, name: str, last_price: float) -> tuple:
     try:
-        api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
+        api_key = st.secrets.get("XAI_API_KEY", "")
         if not api_key:
-            return None, "neutral", "No ANTHROPIC_API_KEY in secrets"
+            return None, "neutral", "No XAI_API_KEY in secrets"
 
-        client = anthropic.Anthropic(api_key=api_key)
+        client = OpenAI(api_key=api_key, base_url="https://api.x.ai/v1")
         today  = date.today().strftime("%Y-%m-%d")
 
         prompt = f"""Today is {today}. You are an independent macro analyst.
@@ -101,13 +101,13 @@ cum_returns: array of 5 floats, each is the CUMULATIVE % return from today's pri
 - Each value clamped to [-0.05, 0.05] (±5% max cumulative)
 - Values should reflect a realistic fundamental-driven trajectory, not random noise."""
 
-        msg = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+        msg = client.chat.completions.create(
+            model="grok-3-mini",
             max_tokens=250,
             messages=[{"role": "user", "content": prompt}],
         )
 
-        text = msg.content[0].text.strip()
+        text = msg.choices[0].message.content.strip()
         text = text.replace("```json", "").replace("```", "").strip()
         data = json.loads(text)
 
@@ -310,4 +310,4 @@ for i, (ticker, name) in enumerate(FORE_TICKERS.items()):
 
         st.markdown("---")
 
-st.caption("Data © Yahoo Finance | LSTM D+5 Forecast | LLM Fundamental Overlay: Claude (Anthropic) | streamlit · plotly · tensorflow · yfinance")
+st.caption("Data © Yahoo Finance | LSTM D+5 Forecast | LLM Fundamental Overlay: Grok (xAI) | streamlit · plotly · tensorflow · yfinance")
