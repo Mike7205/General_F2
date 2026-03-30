@@ -10,7 +10,7 @@ import yfinance as yf
 FORE_TICKERS = {
     "^GSPC":    "SP_500",
     "^HSI":     "HANG SENG INDEX",
-    "CL=F":     "Crude Oil",
+    "BZ=F":     "Brent Oil",
     "GC=F":     "Gold",
     "^N225":    "Nikkei 225",
     "^GDAXI":   "DAX",
@@ -113,7 +113,7 @@ Your analysis must cover ALL relevant factors from the list below and synthesize
 
 4. SECTOR & ASSET-SPECIFIC DRIVERS
    - For EQUITIES (S&P500, Nikkei, DAX, Hang Seng): earnings season, sector rotation, risk-on/off sentiment, VIX
-   - For COMMODITIES (Crude Oil, Gold): supply/demand balance, inventory data (EIA/API), USD strength, safe-haven flows
+   - For COMMODITIES (Brent Oil, Gold): supply/demand balance, inventory data (EIA/API), USD strength, safe-haven flows
    - For FX (EUR/USD, USD/JPY): interest rate differentials, current account, intervention risk, carry dynamics
    - Corporate earnings surprises and guidance revisions
 
