@@ -75,7 +75,7 @@ comm_dict = {
     '^FVX':      '5_YB',
     '^TNX':      '10_YB',
     '^TYX':      '30_YB',
-    'BZ=F':      'Brent Oil',
+    'CL=F':      'Crude Oil',
     'GC=F':      'Gold',
     'SI=F':      'Silver',
     'BTC-USD':   'Bitcoin USD',

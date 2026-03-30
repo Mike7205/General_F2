@@ -42,7 +42,7 @@ ALL_CANDIDATES = {
     "EURCHF=X": "EUR_CHF", "CNY=X": "USD_CNY", "GBPUSD=X": "USD_GBP",
     "JPY=X": "USD_JPY", "EURPLN=X": "EUR_PLN", "PLN=X": "PLN_USD",
     "RUB=X": "USD_RUB", "DX-Y.NYB": "DXY", "^FVX": "5Y_Bond",
-    "^TNX": "10Y_Bond", "^TYX": "30Y_Bond", "BZ=F": "Brent_Oil",
+    "^TNX": "10Y_Bond", "^TYX": "30Y_Bond", "CL=F": "Crude_Oil",
     "GC=F": "Gold", "SI=F": "Silver", "BTC-USD": "Bitcoin",
     "ETH-USD": "Ethereum",
 }

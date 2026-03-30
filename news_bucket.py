@@ -61,7 +61,7 @@ TICKERS = [
     'EURUSD=X', 'EURCHF=X', 'CNY=X', 'GBPUSD=X', 'JPY=X',
     'EURPLN=X', 'PLN=X', 'RUB=X', 'DX-Y.NYB',
     '^FVX', '^TNX', '^TYX',
-    'BZ=F', 'GC=F', 'SI=F',
+    'CL=F', 'GC=F', 'SI=F',
     'BTC-USD', 'ETH-USD',
 ]
 
@@ -76,7 +76,7 @@ KEYWORDS = {
     'PLN=X': 'USD PLN',        'RUB=X': 'USD RUB',        'DX-Y.NYB': 'Dollar Index DXY',
     '^FVX': 'US 5-year Treasury yield', '^TNX': 'US 10-year Treasury yield',
     '^TYX': 'US 30-year Treasury yield',
-    'BZ=F': 'brent oil',       'GC=F': 'gold price',      'SI=F': 'silver price',
+    'CL=F': 'crude oil',       'GC=F': 'gold price',      'SI=F': 'silver price',
     'BTC-USD': 'Bitcoin',      'ETH-USD': 'Ethereum',
 }
 
@@ -90,7 +90,7 @@ AV_MAP = {
     'GBPUSD=X': 'FOREX:GBPUSD', 'JPY=X': 'FOREX:USDJPY',  'EURPLN=X': 'FOREX:EURPLN',
     'PLN=X': 'FOREX:USDPLN', 'RUB=X': 'FOREX:USDRUB',     'DX-Y.NYB': None,
     '^FVX': None,           '^TNX': None,            '^TYX': None,
-    'BZ=F': None,           'GC=F': None,            'SI=F': None,
+    'CL=F': None,           'GC=F': None,            'SI=F': None,
     'BTC-USD': 'CRYPTO:BTC', 'ETH-USD': 'CRYPTO:ETH',
 }
 
@@ -104,7 +104,7 @@ FH_MAP = {
     'GBPUSD=X': None,   'JPY=X': None,      'EURPLN=X': None,
     'PLN=X': None,      'RUB=X': None,      'DX-Y.NYB': None,
     '^FVX': None,       '^TNX': None,        '^TYX': None,
-    'BZ=F': None,       'GC=F': None,        'SI=F': None,
+    'CL=F': None,       'GC=F': None,        'SI=F': None,
     'BTC-USD': 'BINANCE:BTCUSDT', 'ETH-USD': 'BINANCE:ETHUSDT',
 }
 
@@ -118,7 +118,7 @@ TD_MAP = {
     'GBPUSD=X': 'GBP/USD', 'JPY=X': 'USD/JPY',   'EURPLN=X': 'EUR/PLN',
     'PLN=X': 'USD/PLN', 'RUB=X': 'USD/RUB',       'DX-Y.NYB': 'DXY',
     '^FVX': None,       '^TNX': None,        '^TYX': None,
-    'BZ=F': 'BRT/USD',  'GC=F': 'XAU/USD',  'SI=F': 'XAG/USD',
+    'CL=F': 'CL/USD',  'GC=F': 'XAU/USD',  'SI=F': 'XAG/USD',
     'BTC-USD': 'BTC/USD', 'ETH-USD': 'ETH/USD',
 }
 
@@ -132,7 +132,7 @@ EODHD_MAP = {
     'GBPUSD=X': 'GBPUSD.FOREX', 'JPY=X': 'USDJPY.FOREX',   'EURPLN=X': 'EURPLN.FOREX',
     'PLN=X': 'USDPLN.FOREX', 'RUB=X': 'USDRUB.FOREX',      'DX-Y.NYB': 'DX.INDX',
     '^FVX': None,          '^TNX': None,           '^TYX': None,
-    'BZ=F': 'BZ.COMM',    'GC=F': 'GC.COMM',      'SI=F': 'SI.COMM',
+    'CL=F': 'CL.COMM',    'GC=F': 'GC.COMM',      'SI=F': 'SI.COMM',
     'BTC-USD': 'BTC-USD.CC', 'ETH-USD': 'ETH-USD.CC',
 }
 
