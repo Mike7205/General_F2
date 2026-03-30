@@ -203,11 +203,11 @@ def build_chart(hist, fore, llm_dates, llm_prices, name, ticker):
                 hovertemplate="%{x}<br>LLM: %{y:,.4f}<extra></extra>"
             ))
 
-        x_str = pd.Timestamp(last_date).strftime("%Y-%m-%d")
-        fig.add_shape(type="line", x0=x_str, x1=x_str, y0=0, y1=1,
+        today_str = date.today().strftime("%Y-%m-%d")
+        fig.add_shape(type="line", x0=today_str, x1=today_str, y0=0, y1=1,
                       xref="x", yref="paper",
                       line=dict(dash="dot", color="gray", width=1.2))
-        fig.add_annotation(x=x_str, y=1, xref="x", yref="paper",
+        fig.add_annotation(x=today_str, y=1, xref="x", yref="paper",
                            text="Today", showarrow=False,
                            font=dict(color="gray", size=11),
                            xanchor="left", yanchor="top")
