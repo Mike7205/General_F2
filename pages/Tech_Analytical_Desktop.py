@@ -152,7 +152,7 @@ if data.empty:
 # ────────────────────────────────────────────────
 rows       = len(data)
 start_dt   = data['Date'].min().strftime('%Y-%m-%d')
-end_dt     = data['Date'].max().strftime('%Y-%m-%d')
+end_dt     = date.today().strftime('%Y-%m-%d')
 close_max  = round(float(data['Close'].max()),    2)
 close_min  = round(float(data['Close'].min()),    2)
 last_close = round(float(data['Close'].iloc[-1]), 2)
