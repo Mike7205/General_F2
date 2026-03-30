@@ -61,7 +61,7 @@ def get_hist(ticker, n):
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def get_forecast(ticker, corr_min, corr_max):
+def get_forecast(ticker, corr_min, corr_max, cache_date: str = ""):
     from D5_MLP_fore2 import forecast_ticker
     return forecast_ticker(ticker, retrain=False,
                            corr_min=corr_min, corr_max=corr_max)
@@ -264,7 +264,8 @@ for i, (ticker, name) in enumerate(FORE_TICKERS.items()):
         else:
             with st.spinner(f"Loading model for {name}..."):
                 try:
-                    fore, corr_table = get_forecast(ticker, corr_min, corr_max)
+                    fore, corr_table = get_forecast(ticker, corr_min, corr_max,
+                                                    cache_date=str(date.today()))
                 except Exception as e:
                     st.error(f"Forecast error: {e}")
 
