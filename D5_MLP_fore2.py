@@ -44,7 +44,8 @@ ALL_CANDIDATES = {
     "RUB=X": "USD_RUB", "DX-Y.NYB": "DXY", "^FVX": "5Y_Bond",
     "^TNX": "10Y_Bond", "^TYX": "30Y_Bond", "CL=F": "Crude_Oil",
     "GC=F": "Gold", "SI=F": "Silver", "BTC-USD": "Bitcoin",
-    "ETH-USD": "Ethereum",
+    "ETH-USD": "Ethereum", "ZW=F": "Wheat", "ZS=F": "Soybean",
+    "ZR=F": "Rice", "HG=F": "Copper", "ALI=F": "Aluminium",
 }
 
 

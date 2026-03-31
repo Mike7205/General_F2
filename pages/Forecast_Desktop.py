@@ -17,11 +17,6 @@ FORE_TICKERS = {
     "^GDAXI":   "DAX",
     "EURUSD=X": "EUR_USD",
     "JPY=X":    "USD_JPY",
-    "ZW=F":     "Wheat",
-    "ZS=F":     "Soybean",
-    "ZR=F":     "Rice",
-    "HG=F":     "Copper",
-    "ALI=F":    "Aluminium",
 }
 
 # ── Relative tickers to pull as cross-asset context when a ticker isn't in buckets ──
