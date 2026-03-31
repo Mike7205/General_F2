@@ -78,6 +78,12 @@ comm_dict = {
     'CL=F':      'Crude Oil',
     'GC=F':      'Gold',
     'SI=F':      'Silver',
+    'ZW=F':      'Wheat',
+    'ZS=F':      'Soybean',
+    'ZR=F':      'Rice',
+    'HG=F':      'Copper',
+    'ALI=F':     'Aluminium',
+    'CX':        'Cement (CEMEX)',
     'BTC-USD':   'Bitcoin USD',
     'ETH-USD':   'Ethereum USD'
 }

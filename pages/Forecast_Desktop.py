@@ -16,6 +16,12 @@ FORE_TICKERS = {
     "^GDAXI":   "DAX",
     "EURUSD=X": "EUR_USD",
     "JPY=X":    "USD_JPY",
+    "ZW=F":     "Wheat",
+    "ZS=F":     "Soybean",
+    "ZR=F":     "Rice",
+    "HG=F":     "Copper",
+    "ALI=F":    "Aluminium",
+    "CX":       "Cement (CEMEX)",
 }
 
 st.title("Global Economy Indicators – Forecast Dashboard")
@@ -144,7 +150,7 @@ RULES:
 - Be realistic: avoid extreme values unless fundamentals strongly justify them"""
 
         msg = client.chat.completions.create(
-            model="grok-3-mini",
+            model="grok-4-fast",
             max_tokens=400,
             messages=[
                 {"role": "system", "content": "You are a senior macro strategist. Respond only with valid JSON, no markdown."},
