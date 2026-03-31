@@ -1,5 +1,6 @@
 import json
 from datetime import date
+from pathlib import Path
 
 from openai import OpenAI
 import pandas as pd
@@ -22,6 +23,86 @@ FORE_TICKERS = {
     "HG=F":     "Copper",
     "ALI=F":    "Aluminium",
 }
+
+# ── Relative tickers to pull as cross-asset context when a ticker isn't in buckets ──
+_CROSS_ASSET = ['DX-Y.NYB', '^TNX', 'CL=F', 'GC=F', '^GSPC', '^VIX']
+
+_DATA_DIR = Path(__file__).parent.parent / "data"
+
+_NEWS_BUCKETS = [
+    "fyahoo_bucket",
+    "alpha_vantage_bucket",
+    "finnhub_bucket",
+    "twelve_data_bucket",
+    "eodhd_bucket",
+    "coingecko_bucket",
+]
+
+_FRED_COLS = ["FEDFUNDS", "ECBDFR", "IRSTCI01JPM156N", "IRSTCI01CNM156N"]
+
+
+def load_news_context(ticker: str) -> str:
+    """
+    Read the last 3 rows from every news bucket CSV and collect headlines for:
+      1. The target ticker (if its column exists in the bucket)
+      2. A set of cross-asset tickers (DXY, 10Y yield, oil, gold, S&P, VIX)
+    Then append the latest central-bank rates from fred_rates_bucket.
+    Returns a formatted string ready to insert into the LLM prompt.
+    """
+    headlines: list[str] = []
+    seen: set[str] = set()
+
+    tickers_to_pull = list(dict.fromkeys([ticker] + _CROSS_ASSET))
+
+    for bucket_name in _NEWS_BUCKETS:
+        path = _DATA_DIR / f"{bucket_name}.csv"
+        if not path.exists():
+            continue
+        try:
+            df = pd.read_csv(path)
+            if df.empty:
+                continue
+            recent = df.tail(3)
+            for t in tickers_to_pull:
+                if t not in df.columns:
+                    continue
+                for cell in recent[t].fillna("").astype(str):
+                    for h in cell.split("|"):
+                        h = h.strip()
+                        if h and h.lower() != "nan" and h not in seen:
+                            seen.add(h)
+                            headlines.append(h)
+        except Exception:
+            continue
+
+    # FRED central-bank rates
+    fred_lines: list[str] = []
+    fred_path = _DATA_DIR / "fred_rates_bucket.csv"
+    if fred_path.exists():
+        try:
+            df_fred = pd.read_csv(fred_path)
+            if not df_fred.empty:
+                row = df_fred.iloc[-1]
+                for col in _FRED_COLS:
+                    val = str(row.get(col, "")).strip()
+                    if val and val.lower() != "nan":
+                        fred_lines.append(val)
+        except Exception:
+            pass
+
+    parts: list[str] = []
+    if headlines:
+        # Keep target-ticker headlines first, then cross-asset, max 25 total
+        parts.append("RECENT HEADLINES (last 3 update cycles):")
+        for h in headlines[:25]:
+            parts.append(f"• {h}")
+    if fred_lines:
+        parts.append("\nCENTRAL BANK POLICY RATES (latest observed):")
+        for line in fred_lines:
+            parts.append(f"• {line}")
+
+    return "\n".join(parts).strip()
+
 
 st.title("Global Economy Indicators – Forecast Dashboard")
 st.info("LSTM model | Features auto-selected by Pearson correlation [0.10, 0.35] | 5 business days forecast | LLM fundamental overlay")
@@ -79,7 +160,7 @@ def get_forecast_retrain(ticker, corr_min, corr_max):
 
 
 @st.cache_data(ttl=7200, show_spinner=False)
-def get_llm_forecast(ticker: str, name: str, last_price: float) -> tuple:
+def get_llm_forecast(ticker: str, name: str, last_price: float, news_context: str = "") -> tuple:
     try:
         api_key = st.secrets.get("XAI_API_KEY", "")
         if not api_key:
@@ -136,6 +217,9 @@ Your analysis must cover ALL relevant factors from the list below and synthesize
    - Major earnings reports
    - Geopolitical flashpoints or scheduled political events (including any Trump speeches or policy announcements)
 
+=== RECENT MARKET NEWS & INTELLIGENCE ===
+{news_context if news_context else "(No recent news data available — rely on your training knowledge and the framework above)"}
+
 === OUTPUT FORMAT ===
 Respond ONLY with valid JSON, no markdown, no explanation outside JSON:
 {{"cum_returns": [-0.008, -0.005, -0.003, -0.001, 0.002], "direction": "bearish", "reason": "max 160 chars"}}
@@ -150,7 +234,7 @@ RULES:
 
         msg = client.chat.completions.create(
             model="grok-4-fast",
-            max_tokens=400,
+            max_tokens=1024,
             messages=[
                 {"role": "system", "content": "You are a senior macro strategist. Respond only with valid JSON, no markdown."},
                 {"role": "user", "content": prompt},
@@ -283,8 +367,9 @@ for i, (ticker, name) in enumerate(FORE_TICKERS.items()):
         llm_reason    = ""
         if fore is not None and last_price > 0 and not pd.isna(last_price):
             with st.spinner("LLM fundamental analysis..."):
+                news_ctx = load_news_context(ticker)
                 llm_prices_raw, llm_direction, llm_reason = get_llm_forecast(
-                    ticker, name, last_price
+                    ticker, name, last_price, news_ctx
                 )
             if llm_prices_raw is None:
                 st.warning(f"LLM: {llm_reason}")
