@@ -21,7 +21,6 @@ FORE_TICKERS = {
     "ZR=F":     "Rice",
     "HG=F":     "Copper",
     "ALI=F":    "Aluminium",
-    "CX":       "Cement (CEMEX)",
 }
 
 st.title("Global Economy Indicators – Forecast Dashboard")
