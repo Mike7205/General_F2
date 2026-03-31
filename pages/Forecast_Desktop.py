@@ -93,7 +93,7 @@ Your analysis must cover ALL relevant factors from the list below and synthesize
 === ANALYTICAL FRAMEWORK ===
 
 1. MONETARY POLICY & CENTRAL BANKS
-   - Recent and expected decisions by Fed, ECB, BOJ, PBoC, BOE (whichever are relevant to this instrument)
+   - Recent and expected decisions by Fed, ECB, BOJ, PBoC, BOE (whichever are relevant)
    - Forward guidance, dot plots, inflation targets vs. actual CPI/PPI
    - Real interest rate differential impact on FX and risk assets
 
@@ -105,17 +105,19 @@ Your analysis must cover ALL relevant factors from the list below and synthesize
    - Credit conditions, yield curve shape (inversion/steepening)
 
 3. GEOPOLITICS & GLOBAL RISK
-   - Active conflicts and escalation/de-escalation signals
+   - Donald Trump's latest statements, rhetoric, tariff threats, deregulation signals and fiscal policy announcements as major source of policy uncertainty
+   - Persian Gulf / Strait of Hormuz tensions (Iran-Israel conflict, Houthi attacks, potential shipping and oil export disruptions)
+   - Active conflicts and escalation/de-escalation signals, including the Russia-Ukraine war (especially Ukrainian strikes destroying Russian Black Sea oil export ports, loading terminals and their impact on global crude supply)
    - Trade policy: tariffs, sanctions, supply chain disruptions
-   - Political elections, regime changes, policy uncertainty
    - OPEC+ decisions (for oil and energy-linked assets)
    - US-China relations, Taiwan Strait, Middle East, Ukraine/Russia
 
 4. SECTOR & ASSET-SPECIFIC DRIVERS
-   - For EQUITIES (S&P500, Nikkei, DAX, Hang Seng): earnings season, sector rotation, risk-on/off sentiment, VIX
-   - For COMMODITIES (Crude Oil WTI, Gold): supply/demand balance, inventory data (EIA/API), USD strength, safe-haven flows
-   - For FX (EUR/USD, USD/JPY): interest rate differentials, current account, intervention risk, carry dynamics
-   - Corporate earnings surprises and guidance revisions
+   - For EQUITIES: earnings season, sector rotation, risk-on/off, VIX
+   - For COMMODITIES (Crude Oil WTI, Gold): supply/demand, EIA/API inventories, USD strength, plus direct supply shocks from Russian oil export infrastructure damage
+   - For AGRICULTURAL COMMODITIES & FERTILIZERS (wheat, soy, rice, nitrogen fertilizers): weather patterns, crop reports (WASDE), fertilizer prices and availability, global supply disruptions, trade policies and export bans
+   - For INDUSTRIAL METALS & MATERIALS (aluminium, cement): China demand, energy costs, construction activity, supply chain issues and capacity utilization
+   - For FX: interest rate differentials, current account, intervention risk, carry
 
 5. SENTIMENT & CAPITAL FLOWS
    - Institutional positioning (COT reports, fund flows)
@@ -127,7 +129,7 @@ Your analysis must cover ALL relevant factors from the list below and synthesize
    - Central bank meetings, Fed speakers
    - Economic data releases (CPI, NFP, GDP, PMI)
    - Major earnings reports
-   - Geopolitical flashpoints or scheduled political events
+   - Geopolitical flashpoints or scheduled political events (including any Trump speeches or policy announcements)
 
 === OUTPUT FORMAT ===
 Respond ONLY with valid JSON, no markdown, no explanation outside JSON:
