@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import yfinance as yf
 from datetime import date
+import time
 from streamlit_echarts import st_echarts
 
 # ────────────────────────────────────────────────
@@ -87,44 +88,54 @@ comm_dict = {
 }
 
 # ────────────────────────────────────────────────
-# Cache danych – wersja bulletproof
+# Cache danych – wersja z retry na rate limit
 # ────────────────────────────────────────────────
 @st.cache_data(ttl=3600, show_spinner="Fetching data from Yahoo Finance...")
 def get_data(ticker: str) -> pd.DataFrame:
-    try:
-        df = yf.download(ticker, start='2000-01-01', end=today, interval='1d', progress=False)
-        
-        if df.empty:
-            return pd.DataFrame()
-        
-        df = df.reset_index()
-        
-        # Obsługa MultiIndex (czasami się pojawia)
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = [col[0] for col in df.columns]
-        
-        # ←←← KLUCZOWA POPRAWKA – zawsze mamy kolumnę 'Date' ←←←
-        if 'Date' not in df.columns:
-            if 'index' in df.columns:
-                df = df.rename(columns={'index': 'Date'})
-            elif 'Datetime' in df.columns:
-                df = df.rename(columns={'Datetime': 'Date'})
-            elif len(df.columns) > 0:
-                df = df.rename(columns={df.columns[0]: 'Date'})
-        
-        expected = ['Date', 'Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
-        available = [c for c in expected if c in df.columns]
-        
-        if 'Date' not in available:
-            st.warning(f"Nie znaleziono kolumny Date dla {ticker} – pomijam dane")
-            return pd.DataFrame()
-        
-        df = df[available]
-        return df
-        
-    except Exception as e:
-        st.error(f"Błąd pobierania danych dla {ticker}: {str(e)}")
-        return pd.DataFrame()
+    for attempt in range(3):
+        try:
+            df = yf.download(ticker, start='2000-01-01', end=today, interval='1d', progress=False)
+            
+            if df.empty:
+                time.sleep(2)
+                continue
+                
+            df = df.reset_index()
+            
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = [col[0] for col in df.columns]
+            
+            # Zawsze mamy kolumnę 'Date'
+            if 'Date' not in df.columns:
+                if 'index' in df.columns:
+                    df = df.rename(columns={'index': 'Date'})
+                elif 'Datetime' in df.columns:
+                    df = df.rename(columns={'Datetime': 'Date'})
+                elif len(df.columns) > 0:
+                    df = df.rename(columns={df.columns[0]: 'Date'})
+            
+            expected = ['Date', 'Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
+            available = [c for c in expected if c in df.columns]
+            
+            if 'Date' not in available:
+                return pd.DataFrame()
+            
+            df = df[available]
+            return df
+            
+        except Exception as e:
+            error_str = str(e).lower()
+            if "rate limit" in error_str or "too many requests" in error_str:
+                wait = 2 ** attempt
+                st.warning(f"Rate limit Yahoo Finance – czekam {wait}s... (próba {attempt+1}/3)")
+                time.sleep(wait)
+                continue
+            else:
+                st.error(f"Błąd pobierania {ticker}: {str(e)}")
+                return pd.DataFrame()
+    
+    st.error(f"Nie udało się pobrać danych dla {ticker} po 3 próbach (rate limit)")
+    return pd.DataFrame()
 
 # ────────────────────────────────────────────────
 # Wskaźniki techniczne (bez zmian)
@@ -174,7 +185,7 @@ with st.sidebar:
 # ────────────────────────────────────────────────
 data = get_data(ticker)
 if data.empty:
-    st.error(f"Nie udało się pobrać danych dla {selected_name} ({ticker})")
+    st.error(f"Nie udało się pobrać danych dla {selected_name} ({ticker}). Spróbuj za chwilę lub wybierz inny instrument.")
     st.stop()
 
 # ────────────────────────────────────────────────
@@ -206,7 +217,7 @@ left, right = st.columns([5, 4])
 
 with left:
     st.markdown("**Basic information**")
-    st.dataframe(metrics, use_container_width=True)
+    st.dataframe(metrics, width='stretch')          # ← poprawka deprecation
     show_ma = st.checkbox("Moving Averages (SMA)", value=False)
     show_bb = st.checkbox("Bollinger Bands", value=False)
     show_stoch = st.checkbox("Stochastic Oscillator", value=False)
@@ -276,7 +287,7 @@ if show_macd:
     )
 
 # ────────────────────────────────────────────────
-# Plotly – reszta bez zmian (działa tak samo)
+# Subploty Plotly
 # ────────────────────────────────────────────────
 subplot_defs = [("Price", 4)]
 if show_stoch: subplot_defs.append(("Stochastic", 2))
@@ -291,15 +302,99 @@ fig = make_subplots(
     subplot_titles=[s[0] for s in subplot_defs]
 )
 
-# Price panel + reszta wykresów (kod identyczny jak u Ciebie)
-# ... (cała reszta subplotów i ECharts bez zmian – zostawiłem dokładnie tak jak miałeś)
+# Price panel
+fig.add_trace(go.Scatter(
+    x=df_view['Date'], y=df_view['Close'],
+    name="Close", line=dict(color='#1f77b4', width=1.8)
+), row=1, col=1)
 
-# [Tu wklejam resztę Twojego oryginalnego kodu od linii z fig.add_trace aż do końca – jest identyczna]
+if show_ma:
+    fig.add_trace(go.Scatter(
+        x=df_view['Date'], y=df_view[f'SMA_{short_period}'],
+        name=f"SMA {short_period}", line=dict(color="#2ca02c", dash="dot", width=1.5)
+    ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=df_view['Date'], y=df_view[f'SMA_{long_period}'],
+        name=f"SMA {long_period}", line=dict(color="#d62728", dash="dot", width=1.5)
+    ), row=1, col=1)
 
-# Dla skrótu – reszta kodu jest bez zmian, tylko get_data jest teraz niezniszczalny.
+if show_bb:
+    fig.add_trace(go.Scatter(
+        x=df_view['Date'], y=df_view['BB_upper'],
+        name="BB upper", line=dict(color="rgba(255,165,0,0.7)", dash="dash", width=1.2)
+    ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=df_view['Date'], y=df_view['BB_mid'],
+        name="BB middle", line=dict(color="rgba(255,165,0,0.45)", dash="dot", width=1.0)
+    ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=df_view['Date'], y=df_view['BB_lower'],
+        name="BB lower",
+        line=dict(color="rgba(255,165,0,0.7)", dash="dash", width=1.2),
+        fill='tonexty', fillcolor='rgba(255,165,0,0.07)'
+    ), row=1, col=1)
+
+if show_stoch:
+    buy_zone = (df_view['%K'] < 20) & (df_view['%K'] > df_view['%D'])
+    sell_zone = (df_view['%K'] > 80) & (df_view['%K'] < df_view['%D'])
+    fig.add_trace(go.Scatter(
+        x=df_view[buy_zone]['Date'], y=df_view[buy_zone]['Close'],
+        mode='markers', name='Buy signal',
+        marker=dict(color='lime', size=9, symbol='triangle-up')
+    ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=df_view[sell_zone]['Date'], y=df_view[sell_zone]['Close'],
+        mode='markers', name='Sell signal',
+        marker=dict(color='red', size=9, symbol='triangle-down')
+    ), row=1, col=1)
+
+# Panele dolne
+cur = 2
+if show_stoch:
+    fig.add_trace(go.Scatter(x=df_view['Date'], y=df_view['%K'],
+        name="%K", line=dict(color="#1f77b4", width=1.5)), row=cur, col=1)
+    fig.add_trace(go.Scatter(x=df_view['Date'], y=df_view['%D'],
+        name="%D", line=dict(color="#ff7f0e", width=1.5, dash="dot")), row=cur, col=1)
+    fig.add_hline(y=80, line_dash="dash", line_color="red", line_width=1, row=cur, col=1)
+    fig.add_hline(y=20, line_dash="dash", line_color="green", line_width=1, row=cur, col=1)
+    cur += 1
+
+if show_rsi:
+    fig.add_trace(go.Scatter(x=df_view['Date'], y=df_view['RSI'],
+        name="RSI", line=dict(color="#9467bd", width=1.5)), row=cur, col=1)
+    fig.add_hline(y=70, line_dash="dash", line_color="red", line_width=1, row=cur, col=1)
+    fig.add_hline(y=30, line_dash="dash", line_color="green", line_width=1, row=cur, col=1)
+    fig.add_hrect(y0=70, y1=100, line_width=0, fillcolor="red", opacity=0.05, row=cur, col=1)
+    fig.add_hrect(y0=0, y1=30, line_width=0, fillcolor="green", opacity=0.05, row=cur, col=1)
+    fig.update_yaxes(range=[0, 100], row=cur, col=1)
+    cur += 1
+
+if show_macd:
+    hist_colors = ['#2ca02c' if v >= 0 else '#d62728' for v in df_view['MACD_hist'].fillna(0)]
+    fig.add_trace(go.Bar(
+        x=df_view['Date'], y=df_view['MACD_hist'],
+        name="MACD Hist", marker_color=hist_colors, opacity=0.6
+    ), row=cur, col=1)
+    fig.add_trace(go.Scatter(x=df_view['Date'], y=df_view['MACD'],
+        name="MACD", line=dict(color="#1f77b4", width=1.5)), row=cur, col=1)
+    fig.add_trace(go.Scatter(x=df_view['Date'], y=df_view['MACD_signal'],
+        name="Signal", line=dict(color="#ff7f0e", width=1.5, dash="dot")), row=cur, col=1)
+    fig.add_hline(y=0, line_dash="solid", line_color="gray", line_width=1, row=cur, col=1)
+    cur += 1
+
+total_height = 420 + sum(s[1] for s in subplot_defs[1:]) * 80
+fig.update_layout(
+    hovermode="x unified",
+    legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="right", x=1),
+    height=total_height,
+    margin=dict(l=40, r=40, t=40, b=40),
+    xaxis_rangeslider_visible=False
+)
+
+st.plotly_chart(fig, width='stretch', theme="streamlit")   # ← poprawka deprecation
 
 # ────────────────────────────────────────────────
-# ECharts – Candlestick (bez zmian)
+# ECharts – Candlestick
 # ────────────────────────────────────────────────
 with st.expander("ECharts – Candlestick view"):
     df_clean = df_view.dropna(subset=['Open', 'High', 'Low', 'Close']).reset_index(drop=True)
@@ -315,7 +410,31 @@ with st.expander("ECharts – Candlestick view"):
             ],
             axis=1
         ).tolist()
-        options = { ... }  # Twój oryginalny słownik options
+        options = {
+            "title": {"text": f"{selected_name} – candlestick, last {len(df_clean)} dni", "left": "center"},
+            "tooltip": {"trigger": "axis", "axisPointer": {"type": "cross"}},
+            "legend": {"show": False},
+            "dataZoom": [{"type": "inside"}],
+            "xAxis": {
+                "type": "category",
+                "data": df_clean['Date'].dt.strftime('%Y-%m-%d').tolist(),
+                "axisLabel": {"rotate": 45, "fontSize": 11},
+                "boundaryGap": False
+            },
+            "yAxis": {"type": "value", "scale": True},
+            "grid": {"left": "8%", "right": "5%", "bottom": "18%", "top": "12%", "containLabel": True},
+            "series": [{
+                "name": "Candles",
+                "type": "candlestick",
+                "data": candle_data,
+                "itemStyle": {
+                    "color": "#26a69a",
+                    "color0": "#ef5350",
+                    "borderColor": "#26a69a",
+                    "borderColor0": "#ef5350"
+                }
+            }]
+        }
         st_echarts(options, height="580px", key=f"echart_candles_{ticker}_{lookback_days}")
 
 st.caption("Data © Yahoo Finance | App uses yfinance and streamlit-echarts")
