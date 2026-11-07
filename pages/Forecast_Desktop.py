@@ -368,7 +368,8 @@ for i, (ticker, name) in enumerate(FORE_TICKERS.items()):
             col_llm, col_lstm = st.columns(2)
             with col_llm:
                 st.markdown(
-                    "<span style='color:#f5c518;font-size:16px'>⬛</span> **LLM forecast (fundamental)**",
+                    "<span style='color:#f5c518;font-size:16px'>⬛</span> "
+                    "<span style='color:#f5c518;font-weight:bold'>LLM forecast (fundamental)</span>",
                     unsafe_allow_html=True
                 )
                 if llm_prices is not None:
