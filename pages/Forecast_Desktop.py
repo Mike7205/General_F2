@@ -378,7 +378,7 @@ for i, (ticker, name) in enumerate(FORE_TICKERS.items()):
                     st.info("LLM forecast unavailable")
             with col_lstm:
                 st.markdown(
-                   "<span style='color:#d62728;font-size:16px'>⬛</span> "
+                   #"<span style='color:#d62728;font-size:16px'>⬛</span> "
                    "<span style='color:#d62728;font-weight:bold'>LSTM forecast (technical)</span>",
                     unsafe_allow_html=True
                 )
