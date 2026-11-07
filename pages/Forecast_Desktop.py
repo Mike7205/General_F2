@@ -1,7 +1,6 @@
 import json
 from datetime import date
 from pathlib import Path
-
 from openai import OpenAI
 import pandas as pd
 import plotly.graph_objects as go
@@ -19,11 +18,8 @@ FORE_TICKERS = {
     "JPY=X":    "USD_JPY",
 }
 
-# ── Relative tickers to pull as cross-asset context when a ticker isn't in buckets ──
 _CROSS_ASSET = ['DX-Y.NYB', '^TNX', 'CL=F', 'GC=F', '^GSPC', '^VIX']
-
 _DATA_DIR = Path(__file__).parent.parent / "data"
-
 _NEWS_BUCKETS = [
     "fyahoo_bucket",
     "alpha_vantage_bucket",
@@ -32,23 +28,12 @@ _NEWS_BUCKETS = [
     "eodhd_bucket",
     "coingecko_bucket",
 ]
-
 _FRED_COLS = ["FEDFUNDS", "ECBDFR", "IRSTCI01JPM156N", "IRSTCI01CNM156N"]
 
-
 def load_news_context(ticker: str) -> str:
-    """
-    Read the last 3 rows from every news bucket CSV and collect headlines for:
-      1. The target ticker (if its column exists in the bucket)
-      2. A set of cross-asset tickers (DXY, 10Y yield, oil, gold, S&P, VIX)
-    Then append the latest central-bank rates from fred_rates_bucket.
-    Returns a formatted string ready to insert into the LLM prompt.
-    """
     headlines: list[str] = []
     seen: set[str] = set()
-
     tickers_to_pull = list(dict.fromkeys([ticker] + _CROSS_ASSET))
-
     for bucket_name in _NEWS_BUCKETS:
         path = _DATA_DIR / f"{bucket_name}.csv"
         if not path.exists():
@@ -70,7 +55,6 @@ def load_news_context(ticker: str) -> str:
         except Exception:
             continue
 
-    # FRED central-bank rates
     fred_lines: list[str] = []
     fred_path = _DATA_DIR / "fred_rates_bucket.csv"
     if fred_path.exists():
@@ -87,7 +71,6 @@ def load_news_context(ticker: str) -> str:
 
     parts: list[str] = []
     if headlines:
-        # Keep target-ticker headlines first, then cross-asset, max 25 total
         parts.append("RECENT HEADLINES (last 3 update cycles):")
         for h in headlines[:25]:
             parts.append(f"• {h}")
@@ -95,12 +78,10 @@ def load_news_context(ticker: str) -> str:
         parts.append("\nCENTRAL BANK POLICY RATES (latest observed):")
         for line in fred_lines:
             parts.append(f"• {line}")
-
     return "\n".join(parts).strip()
 
-
 st.title("Global Economy Indicators – Forecast Dashboard")
-st.info("LSTM model | Features auto-selected by Pearson correlation [0.10, 0.35] | 5 business days forecast | LLM fundamental overlay")
+st.info("LSTM model | Features auto-selected by Pearson correlation | 5 business days forecast | LLM fundamental overlay")
 st.markdown("---")
 
 with st.sidebar:
@@ -108,12 +89,17 @@ with st.sidebar:
     hist_n   = st.slider("Historical sessions on chart", 5, 600, 30, 5)
     corr_min = st.slider("Min |correlation|", 0.01, 0.50, 0.10, 0.01)
     corr_max = st.slider("Max |correlation|", 0.10, 0.90, 0.35, 0.01)
+
+    # Walidacja zakresu – zapobiega błędom przy złych wartościach
+    if corr_min >= corr_max:
+        st.warning("Min correlation musi być mniejsze od Max. Ustawiam poprawny zakres.")
+        corr_max = min(corr_min + 0.05, 0.90)
+
     retrain  = st.button("Retrain models", type="primary", use_container_width=True)
     st.markdown("---")
     st.caption("Model: LSTM (128/64)\nTraining data: 1000 sessions | LSTM window: 60 steps\nHorizon: 5 business days | Data: Yahoo Finance")
     st.markdown("---")
     st.caption("© 2026 Michal Lesniewski")
-
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_hist(ticker, n):
@@ -140,19 +126,16 @@ def get_hist(ticker, n):
         st.warning(f"Could not load history for {ticker}: {e}")
         return pd.DataFrame(columns=["Date", "Close"])
 
-
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_forecast(ticker, corr_min, corr_max, cache_date: str = ""):
     from D5_MLP_fore2 import forecast_ticker
     return forecast_ticker(ticker, retrain=False,
                            corr_min=corr_min, corr_max=corr_max)
 
-
 def get_forecast_retrain(ticker, corr_min, corr_max):
     from D5_MLP_fore2 import forecast_ticker
     return forecast_ticker(ticker, retrain=True,
                            corr_min=corr_min, corr_max=corr_max)
-
 
 @st.cache_data(ttl=7200, show_spinner=False)
 def get_llm_forecast(ticker: str, name: str, last_price: float, news_context: str = "") -> tuple:
@@ -160,31 +143,23 @@ def get_llm_forecast(ticker: str, name: str, last_price: float, news_context: st
         api_key = st.secrets.get("XAI_API_KEY", "")
         if not api_key:
             return None, "neutral", "No XAI_API_KEY in secrets"
-
         client = OpenAI(api_key=api_key, base_url="https://api.x.ai/v1")
         today  = date.today().strftime("%Y-%m-%d")
-
         prompt = f"""Today is {today}. You are a senior independent macro strategist with deep expertise in global financial markets.
-
 INSTRUMENT: {name} (ticker: {ticker}) | Current price: {last_price:.4f}
-
 TASK: Conduct a deep FUNDAMENTAL analysis (NO technical analysis) for the next 5 business days.
 Your analysis must cover ALL relevant factors from the list below and synthesize them into a price path.
-
 === ANALYTICAL FRAMEWORK ===
-
 1. MONETARY POLICY & CENTRAL BANKS
    - Recent and expected decisions by Fed, ECB, BOJ, PBoC, BOE (whichever are relevant)
    - Forward guidance, dot plots, inflation targets vs. actual CPI/PPI
    - Real interest rate differential impact on FX and risk assets
-
 2. MACROECONOMIC FUNDAMENTALS
    - GDP growth trajectory (US, EU, China, Japan — as relevant)
    - Labor market conditions (NFP, unemployment, wages)
    - Inflation dynamics and surprises vs. consensus
    - PMI, ISM, consumer confidence, retail sales trends
    - Credit conditions, yield curve shape (inversion/steepening)
-
 3. GEOPOLITICS & GLOBAL RISK
    - Donald Trump's latest statements, rhetoric, tariff threats, deregulation signals and fiscal policy announcements as major source of policy uncertainty
    - Persian Gulf / Strait of Hormuz tensions (Iran-Israel conflict, Houthi attacks, potential shipping and oil export disruptions)
@@ -192,33 +167,27 @@ Your analysis must cover ALL relevant factors from the list below and synthesize
    - Trade policy: tariffs, sanctions, supply chain disruptions
    - OPEC+ decisions (for oil and energy-linked assets)
    - US-China relations, Taiwan Strait, Middle East, Ukraine/Russia
-
 4. SECTOR & ASSET-SPECIFIC DRIVERS
    - For EQUITIES: earnings season, sector rotation, risk-on/off, VIX
    - For COMMODITIES (Crude Oil WTI, Gold): supply/demand, EIA/API inventories, USD strength, plus direct supply shocks from Russian oil export infrastructure damage
    - For AGRICULTURAL COMMODITIES & FERTILIZERS (wheat, soy, rice, nitrogen fertilizers): weather patterns, crop reports (WASDE), fertilizer prices and availability, global supply disruptions, trade policies and export bans
    - For INDUSTRIAL METALS & MATERIALS (aluminium, cement): China demand, energy costs, construction activity, supply chain issues and capacity utilization
    - For FX: interest rate differentials, current account, intervention risk, carry
-
 5. SENTIMENT & CAPITAL FLOWS
    - Institutional positioning (COT reports, fund flows)
    - Credit spreads (HY vs. IG), equity risk premium
    - Safe-haven demand vs. risk appetite
    - Dollar index (DXY) trajectory as cross-asset driver
-
 6. KEY SCHEDULED EVENTS IN NEXT 5 DAYS
    - Central bank meetings, Fed speakers
    - Economic data releases (CPI, NFP, GDP, PMI)
    - Major earnings reports
    - Geopolitical flashpoints or scheduled political events (including any Trump speeches or policy announcements)
-
 === RECENT MARKET NEWS & INTELLIGENCE ===
 {news_context if news_context else "(No recent news data available — rely on your training knowledge and the framework above)"}
-
 === OUTPUT FORMAT ===
 Respond ONLY with valid JSON, no markdown, no explanation outside JSON:
 {{"cum_returns": [-0.008, -0.005, -0.003, -0.001, 0.002], "direction": "bearish", "reason": "max 160 chars"}}
-
 RULES:
 - cum_returns: 5 floats = CUMULATIVE % return from today to each of the next 5 business days
 - Each value clamped to [-0.05, 0.05] (max ±5% cumulative move)
@@ -226,7 +195,6 @@ RULES:
 - Reason: single sentence, max 160 chars, cite the DOMINANT fundamental driver
 - Do NOT use chart patterns, support/resistance, or any technical indicator — that is handled by a separate model
 - Be realistic: avoid extreme values unless fundamentals strongly justify them"""
-
         msg = client.chat.completions.create(
             model="grok-4-fast",
             max_tokens=1024,
@@ -235,36 +203,28 @@ RULES:
                 {"role": "user", "content": prompt},
             ],
         )
-
         text = msg.choices[0].message.content.strip()
         text = text.replace("```json", "").replace("```", "").strip()
         data = json.loads(text)
-
         raw_returns = data.get("cum_returns", [0, 0, 0, 0, 0])
         cum_returns = [max(-0.05, min(0.05, float(r))) for r in raw_returns[:5]]
         llm_prices  = [round(last_price * (1 + r), 4) for r in cum_returns]
-
         direction = data.get("direction", "neutral")
         reason    = data.get("reason", "")[:160]
         return llm_prices, direction, reason
-
     except Exception as e:
         return None, "neutral", f"LLM error: {e}"
 
-
 def build_chart(hist, fore, llm_dates, llm_prices, name, ticker):
     fig = go.Figure()
-
     fig.add_trace(go.Scatter(
         x=hist["Date"], y=hist["Close"],
         name="Close", line=dict(color="#1f77b4", width=1.8),
         hovertemplate="%{x|%Y-%m-%d}<br>Close: %{y:,.4f}<extra></extra>"
     ))
-
     if not hist.empty:
         last_date  = hist["Date"].iloc[-1]
         last_price = float(hist["Close"].iloc[-1])
-
         if fore is not None and not fore.empty:
             fig.add_trace(go.Scatter(
                 x=[last_date] + list(fore["Date"]),
@@ -276,7 +236,6 @@ def build_chart(hist, fore, llm_dates, llm_prices, name, ticker):
                             line=dict(color="white", width=1.5)),
                 hovertemplate="%{x}<br>LSTM: %{y:,.4f}<extra></extra>"
             ))
-
         if llm_dates is not None and llm_prices is not None:
             fig.add_trace(go.Scatter(
                 x=[last_date] + llm_dates,
@@ -288,7 +247,6 @@ def build_chart(hist, fore, llm_dates, llm_prices, name, ticker):
                             line=dict(color="#555", width=1)),
                 hovertemplate="%{x}<br>LLM: %{y:,.4f}<extra></extra>"
             ))
-
         today_str = date.today().strftime("%Y-%m-%d")
         fig.add_shape(type="line", x0=today_str, x1=today_str, y0=0, y1=1,
                       xref="x", yref="paper",
@@ -297,7 +255,6 @@ def build_chart(hist, fore, llm_dates, llm_prices, name, ticker):
                            text="Today", showarrow=False,
                            font=dict(color="gray", size=11),
                            xanchor="left", yanchor="top")
-
     fig.update_layout(
         title=dict(text=f"{name}  ({ticker})", x=0.0, font=dict(size=15)),
         height=400, hovermode="x unified",
@@ -309,9 +266,7 @@ def build_chart(hist, fore, llm_dates, llm_prices, name, ticker):
     )
     return fig
 
-
 def _forecast_rows(dates, prices, last_price, color_hex):
-    """Render forecast rows: date | value | diff"""
     for d, p in zip(dates, prices):
         diff  = p - last_price
         sign  = "+" if diff >= 0 else ""
@@ -322,16 +277,13 @@ def _forecast_rows(dates, prices, last_price, color_hex):
             unsafe_allow_html=True
         )
 
-
 tabs = st.tabs(list(FORE_TICKERS.values()))
-
 for i, (ticker, name) in enumerate(FORE_TICKERS.items()):
     with tabs[i]:
         hist = get_hist(ticker, hist_n)
-
-        # Retry once on empty (first-load network glitch)
         if hist.empty:
-            hist = get_hist.clear() or get_hist(ticker, hist_n)
+            get_hist.clear()
+            hist = get_hist(ticker, hist_n)
 
         last_price = float(hist["Close"].iloc[-1]) if len(hist) >= 1 else float("nan")
         prev_price = float(hist["Close"].iloc[-2]) if len(hist) >= 2 else last_price
@@ -350,10 +302,28 @@ for i, (ticker, name) in enumerate(FORE_TICKERS.items()):
         else:
             with st.spinner(f"Loading model for {name}..."):
                 try:
-                    fore, corr_table = get_forecast(ticker, corr_min, corr_max,
-                                                    cache_date=str(date.today()))
+                    fore, corr_table = get_forecast(
+                        ticker, corr_min, corr_max,
+                        cache_date=str(date.today())
+                    )
                 except Exception as e:
                     st.error(f"Forecast error: {e}")
+
+        # Bezpieczne filtrowanie po stronie dashboardu (zabezpieczenie przed błędami modelu)
+        if corr_table is not None and not corr_table.empty:
+            mask = (corr_table["abs_corr"] >= corr_min) & (corr_table["abs_corr"] <= corr_max)
+            selected = corr_table[mask]
+            if selected.empty:
+                st.warning(
+                    f"Brak cech w zakresie korelacji [{corr_min:.2f}, {corr_max:.2f}]. "
+                    "Używam najbliższych dostępnych."
+                )
+                # fallback: bierzemy top cechy najbliższe progowi
+                corr_table["dist"] = (corr_table["abs_corr"] - (corr_min + corr_max) / 2).abs()
+                selected = corr_table.nsmallest(5, "dist")
+            # nadpisujemy selected flagę tak, żeby expander pokazywał aktualny zakres
+            corr_table = corr_table.copy()
+            corr_table["selected"] = corr_table.index.isin(selected.index)
 
         # ── 2. Load LLM forecast ────────────────────────────────────────────
         llm_prices    = None
@@ -374,7 +344,6 @@ for i, (ticker, name) in enumerate(FORE_TICKERS.items()):
 
         # ── 3. Render: left col = metric + LLM badge | right col = chart ───
         col_m, col_c = st.columns([1, 4])
-
         with col_m:
             st.metric(label=name, value=f"{last_price:,.4f}", delta=f"{delta_pct:+.2f}%")
             if llm_prices is not None:
@@ -387,7 +356,6 @@ for i, (ticker, name) in enumerate(FORE_TICKERS.items()):
                 )
             elif llm_reason:
                 st.warning(f"LLM: {llm_reason}")
-
         with col_c:
             if hist.empty:
                 st.warning(f"No data available for {name} ({ticker})")
@@ -395,10 +363,9 @@ for i, (ticker, name) in enumerate(FORE_TICKERS.items()):
                 fig = build_chart(hist, fore, llm_dates, llm_prices, name, ticker)
                 st.plotly_chart(fig, use_container_width=True, theme="streamlit")
 
-        # ── 4. Forecast tables: two columns below chart ──────────────────
+        # ── 4. Forecast tables ──────────────────────────────────────────────
         if fore is not None or llm_prices is not None:
             col_llm, col_lstm = st.columns(2)
-
             with col_llm:
                 st.markdown(
                     "<span style='color:#f5c518;font-size:16px'>⬛</span> **LLM forecast (fundamental)**",
@@ -408,7 +375,6 @@ for i, (ticker, name) in enumerate(FORE_TICKERS.items()):
                     _forecast_rows(llm_dates, llm_prices, last_price, "#f5c518")
                 else:
                     st.info("LLM forecast unavailable")
-
             with col_lstm:
                 st.markdown(
                     "<span style='color:#d62728;font-size:16px'>⬛</span> **LSTM forecast (technical)**",
