@@ -1,6 +1,7 @@
 import json
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
+
 from openai import OpenAI
 import pandas as pd
 import plotly.graph_objects as go
@@ -30,10 +31,12 @@ _NEWS_BUCKETS = [
 ]
 _FRED_COLS = ["FEDFUNDS", "ECBDFR", "IRSTCI01JPM156N", "IRSTCI01CNM156N"]
 
+
 def load_news_context(ticker: str) -> str:
     headlines: list[str] = []
     seen: set[str] = set()
     tickers_to_pull = list(dict.fromkeys([ticker] + _CROSS_ASSET))
+
     for bucket_name in _NEWS_BUCKETS:
         path = _DATA_DIR / f"{bucket_name}.csv"
         if not path.exists():
@@ -80,6 +83,7 @@ def load_news_context(ticker: str) -> str:
             parts.append(f"• {line}")
     return "\n".join(parts).strip()
 
+
 st.title("Global Economy Indicators – Forecast Dashboard")
 st.info("LSTM model | Features auto-selected by Pearson correlation | 5 business days forecast | LLM fundamental overlay")
 st.markdown("---")
@@ -90,88 +94,73 @@ with st.sidebar:
     corr_min = st.slider("Min |correlation|", 0.01, 0.50, 0.10, 0.01)
     corr_max = st.slider("Max |correlation|", 0.10, 0.90, 0.35, 0.01)
 
-    # Walidacja zakresu – zapobiega błędom przy złych wartościach
     if corr_min >= corr_max:
         st.warning("Min correlation musi być mniejsze od Max. Ustawiam poprawny zakres.")
         corr_max = min(corr_min + 0.05, 0.90)
 
-    retrain  = st.button("Retrain models", type="primary", use_container_width=True)
+    retrain = st.button("Retrain models", type="primary", use_container_width=True)
     st.markdown("---")
     st.caption("Model: LSTM (128/64)\nTraining data: 1000 sessions | LSTM window: 60 steps\nHorizon: 5 business days | Data: Yahoo Finance")
     st.markdown("---")
     st.caption("© 2026 Michal Lesniewski")
 
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_hist(ticker, n):
     try:
-        raw = yf.download(ticker, period="6y", interval="1d",
-                          progress=False, auto_adjust=True)
+        raw = yf.download(
+            ticker,
+            period="6y",
+            interval="1d",
+            progress=False,
+            auto_adjust=True
+        )
+
+        # Fallback gdy brak świeżych danych
+        if raw is None or raw.empty or len(raw) < 30:
+            yesterday = (datetime.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+            raw = yf.download(
+                ticker,
+                start="2018-01-01",
+                end=yesterday,
+                interval="1d",
+                progress=False,
+                auto_adjust=True
+            )
+
         if raw is None or raw.empty:
             return pd.DataFrame(columns=["Date", "Close"])
+
         if isinstance(raw.columns, pd.MultiIndex):
             raw.columns = [str(c[0]) for c in raw.columns]
+
         if "Close" not in raw.columns:
             return pd.DataFrame(columns=["Date", "Close"])
+
         col = raw["Close"]
         if isinstance(col, pd.DataFrame):
             col = col.iloc[:, 0]
-        col = col.squeeze()
-        if not hasattr(col, "reset_index"):
-            return pd.DataFrame(columns=["Date", "Close"])
+
         df = col.reset_index()
         df.columns = ["Date", "Close"]
         df = df.dropna()
         return df.tail(n).reset_index(drop=True)
+
     except Exception as e:
         st.warning(f"Could not load history for {ticker}: {e}")
         return pd.DataFrame(columns=["Date", "Close"])
 
-# second version with yestarday
-"""@st.cache_data(ttl=3600, show_spinner=False)
-def get_hist(ticker, n):
-    try:
-        # Najpierw normalne pobranie
-        raw = yf.download(ticker, period="6y", interval="1d",
-                          progress=False, auto_adjust=True)
-        
-        # Jeśli puste lub za mało danych – spróbuj zakończyć na wczoraj
-        if raw is None or raw.empty or len(raw) < 10:
-            yesterday = (datetime.today() - timedelta(days=1)).strftime("%Y-%m-%d")
-            raw = yf.download(ticker, start="2018-01-01", end=yesterday,
-                              interval="1d", progress=False, auto_adjust=True)
-        
-        if raw is None or raw.empty:
-            return pd.DataFrame(columns=["Date", "Close"])
-            
-        if isinstance(raw.columns, pd.MultiIndex):
-            raw.columns = [str(c[0]) for c in raw.columns]
-        if "Close" not in raw.columns:
-            return pd.DataFrame(columns=["Date", "Close"])
-            
-        col = raw["Close"]
-        if isinstance(col, pd.DataFrame):
-            col = col.iloc[:, 0]
-        col = col.squeeze()
-        
-        df = col.reset_index()
-        df.columns = ["Date", "Close"]
-        df = df.dropna()
-        return df.tail(n).reset_index(drop=True)
-        
-    except Exception as e:
-        st.warning(f"Could not load history for {ticker}: {e}")
-        return pd.DataFrame(columns=["Date", "Close"])"""
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_forecast(ticker, corr_min, corr_max, cache_date: str = ""):
     from D5_MLP_fore2 import forecast_ticker
-    return forecast_ticker(ticker, retrain=False,
-                           corr_min=corr_min, corr_max=corr_max)
+    return forecast_ticker(ticker, retrain=False, corr_min=corr_min, corr_max=corr_max)
+
 
 def get_forecast_retrain(ticker, corr_min, corr_max):
     from D5_MLP_fore2 import forecast_ticker
-    return forecast_ticker(ticker, retrain=True,
-                           corr_min=corr_min, corr_max=corr_max)
+    return forecast_ticker(ticker, retrain=True, corr_min=corr_min, corr_max=corr_max)
+
 
 @st.cache_data(ttl=7200, show_spinner=False)
 def get_llm_forecast(ticker: str, name: str, last_price: float, news_context: str = "") -> tuple:
@@ -179,8 +168,10 @@ def get_llm_forecast(ticker: str, name: str, last_price: float, news_context: st
         api_key = st.secrets.get("XAI_API_KEY", "")
         if not api_key:
             return None, "neutral", "No XAI_API_KEY in secrets"
+
         client = OpenAI(api_key=api_key, base_url="https://api.x.ai/v1")
-        today  = date.today().strftime("%Y-%m-%d")
+        today = date.today().strftime("%Y-%m-%d")
+
         prompt = f"""Today is {today}. You are a senior independent macro strategist with deep expertise in global financial markets.
 INSTRUMENT: {name} (ticker: {ticker}) | Current price: {last_price:.4f}
 TASK: Conduct a deep FUNDAMENTAL analysis (NO technical analysis) for the next 5 business days.
@@ -231,6 +222,7 @@ RULES:
 - Reason: single sentence, max 160 chars, cite the DOMINANT fundamental driver
 - Do NOT use chart patterns, support/resistance, or any technical indicator — that is handled by a separate model
 - Be realistic: avoid extreme values unless fundamentals strongly justify them"""
+
         msg = client.chat.completions.create(
             model="grok-4-fast",
             max_tokens=1024,
@@ -242,14 +234,17 @@ RULES:
         text = msg.choices[0].message.content.strip()
         text = text.replace("```json", "").replace("```", "").strip()
         data = json.loads(text)
+
         raw_returns = data.get("cum_returns", [0, 0, 0, 0, 0])
         cum_returns = [max(-0.05, min(0.05, float(r))) for r in raw_returns[:5]]
-        llm_prices  = [round(last_price * (1 + r), 4) for r in cum_returns]
+        llm_prices = [round(last_price * (1 + r), 4) for r in cum_returns]
         direction = data.get("direction", "neutral")
-        reason    = data.get("reason", "")[:160]
+        reason = data.get("reason", "")[:160]
         return llm_prices, direction, reason
+
     except Exception as e:
         return None, "neutral", f"LLM error: {e}"
+
 
 def build_chart(hist, fore, llm_dates, llm_prices, name, ticker):
     fig = go.Figure()
@@ -258,9 +253,11 @@ def build_chart(hist, fore, llm_dates, llm_prices, name, ticker):
         name="Close", line=dict(color="#1f77b4", width=1.8),
         hovertemplate="%{x|%Y-%m-%d}<br>Close: %{y:,.4f}<extra></extra>"
     ))
+
     if not hist.empty:
-        last_date  = hist["Date"].iloc[-1]
+        last_date = hist["Date"].iloc[-1]
         last_price = float(hist["Close"].iloc[-1])
+
         if fore is not None and not fore.empty:
             fig.add_trace(go.Scatter(
                 x=[last_date] + list(fore["Date"]),
@@ -272,6 +269,7 @@ def build_chart(hist, fore, llm_dates, llm_prices, name, ticker):
                             line=dict(color="white", width=1.5)),
                 hovertemplate="%{x}<br>LSTM: %{y:,.4f}<extra></extra>"
             ))
+
         if llm_dates is not None and llm_prices is not None:
             fig.add_trace(go.Scatter(
                 x=[last_date] + llm_dates,
@@ -283,29 +281,39 @@ def build_chart(hist, fore, llm_dates, llm_prices, name, ticker):
                             line=dict(color="#555", width=1)),
                 hovertemplate="%{x}<br>LLM: %{y:,.4f}<extra></extra>"
             ))
+
         today_str = date.today().strftime("%Y-%m-%d")
-        fig.add_shape(type="line", x0=today_str, x1=today_str, y0=0, y1=1,
-                      xref="x", yref="paper",
-                      line=dict(dash="dot", color="gray", width=1.2))
-        fig.add_annotation(x=today_str, y=1, xref="x", yref="paper",
-                           text="Today", showarrow=False,
-                           font=dict(color="gray", size=11),
-                           xanchor="left", yanchor="top")
+        fig.add_shape(
+            type="line", x0=today_str, x1=today_str, y0=0, y1=1,
+            xref="x", yref="paper",
+            line=dict(dash="dot", color="gray", width=1.2)
+        )
+        fig.add_annotation(
+            x=today_str, y=1, xref="x", yref="paper",
+            text="Today", showarrow=False,
+            font=dict(color="gray", size=11),
+            xanchor="left", yanchor="top"
+        )
+
     fig.update_layout(
         title=dict(text=f"{name}  ({ticker})", x=0.0, font=dict(size=15)),
-        height=400, hovermode="x unified",
+        height=400,
+        hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="right", x=1),
         margin=dict(l=40, r=40, t=55, b=40),
         xaxis_rangeslider_visible=False,
-        plot_bgcolor="white", paper_bgcolor="white",
-        xaxis=dict(gridcolor="#f0f0f0"), yaxis=dict(gridcolor="#f0f0f0"),
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        xaxis=dict(gridcolor="#f0f0f0"),
+        yaxis=dict(gridcolor="#f0f0f0"),
     )
     return fig
 
+
 def _forecast_rows(dates, prices, last_price, color_hex):
     for d, p in zip(dates, prices):
-        diff  = p - last_price
-        sign  = "+" if diff >= 0 else ""
+        diff = p - last_price
+        sign = "+" if diff >= 0 else ""
         color = "green" if diff >= 0 else "red"
         st.markdown(
             f"`{d}` &nbsp; **{p:,.4f}** "
@@ -313,7 +321,9 @@ def _forecast_rows(dates, prices, last_price, color_hex):
             unsafe_allow_html=True
         )
 
+
 tabs = st.tabs(list(FORE_TICKERS.values()))
+
 for i, (ticker, name) in enumerate(FORE_TICKERS.items()):
     with tabs[i]:
         hist = get_hist(ticker, hist_n)
@@ -323,10 +333,10 @@ for i, (ticker, name) in enumerate(FORE_TICKERS.items()):
 
         last_price = float(hist["Close"].iloc[-1]) if len(hist) >= 1 else float("nan")
         prev_price = float(hist["Close"].iloc[-2]) if len(hist) >= 2 else last_price
-        delta_pct  = (last_price - prev_price) / prev_price * 100 if prev_price else 0.0
+        delta_pct = (last_price - prev_price) / prev_price * 100 if prev_price else 0.0
 
-        # ── 1. Load LSTM forecast ───────────────────────────────────────────
-        fore       = None
+        # ── LSTM forecast ───────────────────────────────────────────────
+        fore = None
         corr_table = None
         if retrain:
             with st.spinner(f"Training LSTM for {name}..."):
@@ -345,7 +355,7 @@ for i, (ticker, name) in enumerate(FORE_TICKERS.items()):
                 except Exception as e:
                     st.error(f"Forecast error: {e}")
 
-        # Bezpieczne filtrowanie po stronie dashboardu (zabezpieczenie przed błędami modelu)
+        # Bezpieczne filtrowanie cech
         if corr_table is not None and not corr_table.empty:
             mask = (corr_table["abs_corr"] >= corr_min) & (corr_table["abs_corr"] <= corr_max)
             selected = corr_table[mask]
@@ -354,18 +364,17 @@ for i, (ticker, name) in enumerate(FORE_TICKERS.items()):
                     f"Brak cech w zakresie korelacji [{corr_min:.2f}, {corr_max:.2f}]. "
                     "Używam najbliższych dostępnych."
                 )
-                # fallback: bierzemy top cechy najbliższe progowi
                 corr_table["dist"] = (corr_table["abs_corr"] - (corr_min + corr_max) / 2).abs()
                 selected = corr_table.nsmallest(5, "dist")
-            # nadpisujemy selected flagę tak, żeby expander pokazywał aktualny zakres
             corr_table = corr_table.copy()
             corr_table["selected"] = corr_table.index.isin(selected.index)
 
-        # ── 2. Load LLM forecast ────────────────────────────────────────────
-        llm_prices    = None
-        llm_dates     = None
+        # ── LLM forecast ────────────────────────────────────────────────
+        llm_prices = None
+        llm_dates = None
         llm_direction = "neutral"
-        llm_reason    = ""
+        llm_reason = ""
+
         if fore is not None and last_price > 0 and not pd.isna(last_price):
             with st.spinner("LLM fundamental analysis..."):
                 news_ctx = load_news_context(ticker)
@@ -375,10 +384,10 @@ for i, (ticker, name) in enumerate(FORE_TICKERS.items()):
             if llm_prices_raw is None:
                 st.warning(f"LLM: {llm_reason}")
             else:
-                llm_dates  = list(fore["Date"])
+                llm_dates = list(fore["Date"])
                 llm_prices = llm_prices_raw
 
-        # ── 3. Render: left col = metric + LLM badge | right col = chart ───
+        # ── Layout ──────────────────────────────────────────────────────
         col_m, col_c = st.columns([1, 4])
         with col_m:
             st.metric(label=name, value=f"{last_price:,.4f}", delta=f"{delta_pct:+.2f}%")
@@ -392,6 +401,7 @@ for i, (ticker, name) in enumerate(FORE_TICKERS.items()):
                 )
             elif llm_reason:
                 st.warning(f"LLM: {llm_reason}")
+
         with col_c:
             if hist.empty:
                 st.warning(f"No data available for {name} ({ticker})")
@@ -399,12 +409,12 @@ for i, (ticker, name) in enumerate(FORE_TICKERS.items()):
                 fig = build_chart(hist, fore, llm_dates, llm_prices, name, ticker)
                 st.plotly_chart(fig, use_container_width=True, theme="streamlit")
 
-        # ── 4. Forecast tables ──────────────────────────────────────────────
+        # ── Tabele prognoz ──────────────────────────────────────────────
         if fore is not None or llm_prices is not None:
             col_llm, col_lstm = st.columns(2)
+
             with col_llm:
                 st.markdown(
-                    #"<span style='color:#f5c518;font-size:16px'>⬛</span> "
                     "<span style='color:#f5c518;font-weight:bold'>LLM forecast (fundamental)</span>",
                     unsafe_allow_html=True
                 )
@@ -412,20 +422,21 @@ for i, (ticker, name) in enumerate(FORE_TICKERS.items()):
                     _forecast_rows(llm_dates, llm_prices, last_price, "#f5c518")
                 else:
                     st.info("LLM forecast unavailable")
+
             with col_lstm:
                 st.markdown(
-                   #"<span style='color:#d62728;font-size:16px'>⬛</span> "
-                   "<span style='color:#d62728;font-weight:bold'>LSTM forecast (technical)</span>",
+                    "<span style='color:#d62728;font-weight:bold'>LSTM forecast (technical)</span>",
                     unsafe_allow_html=True
                 )
                 if fore is not None:
                     _forecast_rows(
                         list(fore["Date"]),
                         list(fore["Forecast"]),
-                        last_price, "#d62728"
+                        last_price,
+                        "#d62728"
                     )
 
-        # ── Model inputs expander ───────────────────────────────────────────
+        # ── Expander z cechami ──────────────────────────────────────────
         if corr_table is not None:
             selected_rows = corr_table[corr_table["selected"]]
             n_sel = len(selected_rows)
