@@ -101,7 +101,7 @@ with st.sidebar:
     st.markdown("---")
     st.caption("© 2026 Michal Lesniewski")
 
-"""@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_hist(ticker, n):
     try:
         raw = yf.download(ticker, period="6y", interval="1d",
@@ -124,9 +124,10 @@ def get_hist(ticker, n):
         return df.tail(n).reset_index(drop=True)
     except Exception as e:
         st.warning(f"Could not load history for {ticker}: {e}")
-        return pd.DataFrame(columns=["Date", "Close"])"""
+        return pd.DataFrame(columns=["Date", "Close"])
 
-@st.cache_data(ttl=3600, show_spinner=False)
+# second version with yestarday
+"""@st.cache_data(ttl=3600, show_spinner=False)
 def get_hist(ticker, n):
     try:
         # Najpierw normalne pobranie
@@ -159,7 +160,7 @@ def get_hist(ticker, n):
         
     except Exception as e:
         st.warning(f"Could not load history for {ticker}: {e}")
-        return pd.DataFrame(columns=["Date", "Close"])
+        return pd.DataFrame(columns=["Date", "Close"])"""
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_forecast(ticker, corr_min, corr_max, cache_date: str = ""):
