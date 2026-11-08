@@ -101,7 +101,7 @@ with st.sidebar:
     st.markdown("---")
     st.caption("© 2026 Michal Lesniewski")
 
-@st.cache_data(ttl=3600, show_spinner=False)
+"""@st.cache_data(ttl=3600, show_spinner=False)
 def get_hist(ticker, n):
     try:
         raw = yf.download(ticker, period="6y", interval="1d",
@@ -122,6 +122,41 @@ def get_hist(ticker, n):
         df.columns = ["Date", "Close"]
         df = df.dropna()
         return df.tail(n).reset_index(drop=True)
+    except Exception as e:
+        st.warning(f"Could not load history for {ticker}: {e}")
+        return pd.DataFrame(columns=["Date", "Close"])"""
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_hist(ticker, n):
+    try:
+        # Najpierw normalne pobranie
+        raw = yf.download(ticker, period="6y", interval="1d",
+                          progress=False, auto_adjust=True)
+        
+        # Jeśli puste lub za mało danych – spróbuj zakończyć na wczoraj
+        if raw is None or raw.empty or len(raw) < 10:
+            yesterday = (datetime.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+            raw = yf.download(ticker, start="2018-01-01", end=yesterday,
+                              interval="1d", progress=False, auto_adjust=True)
+        
+        if raw is None or raw.empty:
+            return pd.DataFrame(columns=["Date", "Close"])
+            
+        if isinstance(raw.columns, pd.MultiIndex):
+            raw.columns = [str(c[0]) for c in raw.columns]
+        if "Close" not in raw.columns:
+            return pd.DataFrame(columns=["Date", "Close"])
+            
+        col = raw["Close"]
+        if isinstance(col, pd.DataFrame):
+            col = col.iloc[:, 0]
+        col = col.squeeze()
+        
+        df = col.reset_index()
+        df.columns = ["Date", "Close"]
+        df = df.dropna()
+        return df.tail(n).reset_index(drop=True)
+        
     except Exception as e:
         st.warning(f"Could not load history for {ticker}: {e}")
         return pd.DataFrame(columns=["Date", "Close"])
