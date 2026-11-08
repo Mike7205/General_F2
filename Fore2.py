@@ -8,7 +8,7 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    section[data-testid="stSidebar"] { background-color: #7eb8d4 !important; }
+    section[data-testid="stSidebar"] { background-color: #1F2E52 !important; }
     details summary {
         background-color: #85c1d9 !important; color: #1a1a2e !important;
         border-radius: 6px !important; padding: 8px 12px !important; font-weight: 500;
